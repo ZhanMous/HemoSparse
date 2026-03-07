@@ -1,0 +1,32 @@
+# HemoSparse 环境依赖
+# PyTorch (CUDA 12.1, 适配 RTX 4070 笔记本)
+torch>=2.1.0
+torchvision>=0.16.0
+
+# SpikingJelly (脉冲神经网络框架，强制使用)
+spikingjelly>=0.0.0.0.14
+
+# 医疗影像数据集
+medmnist>=3.0.1
+
+# GPU功耗监控
+nvidia-ml-py
+
+# 可视化
+matplotlib>=3.7.0
+plotly>=5.18.0
+seaborn>=0.13.0
+kaleido>=0.2.1
+tensorboard
+
+# 科学计算
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.11.0
+scikit-learn>=1.3.0
+
+# 差分隐私
+opacus>=1.4.0
+
+# 进度条
+tqdm>=4.65.0
