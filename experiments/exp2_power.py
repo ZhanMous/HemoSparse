@@ -1,17 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-实验2：SNN 稀疏性与低功耗关联性验证 (RTX 4070 专属)
-- 理论计算：使用 SpikingJelly 原生 cal_energy 计算 MACs / ACs
-- 实测功耗：基于 pynvml 读取 RTX 4070 的实际功耗 (mJ) 与 延迟 (ms)
+实验2：SNN 稀疏性与低功耗关联性验证
+- 实测功耗：基于 pynvml 读取现代GPU的实际功耗 (mJ) 与 延迟 (ms)
+- 关联分析：验证稀疏性与功耗的负相关性
 """
 
 import os
 import sys
 import time
 import torch
-import pynvml
+import numpy as np
 import pandas as pd
-from contextlib import contextmanager
+from tqdm import tqdm
+
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    NVML_AVAILABLE = True
+except ImportError:
+    print("  [警告] pynvml 未安装，无法测量功耗")
+    NVML_AVAILABLE = False
+except pynvml.NVMLError:
+    print("  [警告] NVML 初始化失败，无法测量功耗")
+    NVML_AVAILABLE = False
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import DEVICE, RESULTS_DIR, set_seed, POWER_WARMUP_ITERS, POWER_TEST_ITERS
@@ -26,118 +37,146 @@ try:
 except ImportError:
     print("Warning: Missing spikingjelly components.")
 
-class PowerMonitor:
-    def __init__(self):
-        pynvml.nvmlInit()
-        self.handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        self.idle_power = pynvml.nvmlDeviceGetPowerUsage(self.handle) / 1000.0 # W
+def measure_gpu_power(device_id=0):
+    """测量GPU功耗 (mW)"""
+    if not NVML_AVAILABLE:
+        return None
         
-    def get_current_power(self):
-        return pynvml.nvmlDeviceGetPowerUsage(self.handle) / 1000.0 # W
-        
-    def __del__(self):
-        try:
-            pynvml.nvmlShutdown()
-        except:
-            pass
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
+        power = pynvml.nvmlDeviceGetPowerUsage(handle)
+        return power
+    except Exception as e:
+        print(f"  [警告] 读取功耗失败: {e}")
+        return None
+
 
 def run_experiment_2_power():
-    print("\n" + "="*60)
-    print("实验2：SNN 稀疏性与低功耗关联性验证 (4070 实测)")
-    print("="*60)
+    """运行功耗实验：SNN 稀疏性与低功耗关联性验证"""
+    print("\n实验2：SNN 稀疏性与低功耗关联性验证")
+    print("-" * 50)
     
     os.makedirs(RESULTS_DIR, exist_ok=True)
     set_seed()
     
-    monitor = PowerMonitor()
-    print(f"GPU Idle Power: {monitor.idle_power:.2f} W")
+    # 加载模型
+    print("  加载模型...")
+    snn_model = SNN(T=20).to(DEVICE)
+    dense_snn_model = DenseSNN(T=20).to(DEVICE)
+    ann_model = ANN().to(DEVICE)
     
-    # 模拟数据 [N=1, 单样本推理]
-    test_loader_snn, _, _, _ = get_blood_mnist_loaders(batch_size=1, T=20, mode='snn', augment=False)
-    test_loader_ann, _, _, _ = get_blood_mnist_loaders(batch_size=1, T=20, mode='ann', augment=False)
+    # 设置为评估模式
+    snn_model.eval()
+    dense_snn_model.eval()
+    ann_model.eval()
     
-    inputs_snn, _ = next(iter(test_loader_snn))
-    inputs_ann, _ = next(iter(test_loader_ann))
+    # 加载测试数据 (小批量用于测试)
+    print("  加载测试数据...")
+    test_loader_snn, _, _, _ = get_blood_mnist_loaders(batch_size=16, T=20, mode='snn', augment=False)
+    test_loader_ann, _, _, _ = get_blood_mnist_loaders(batch_size=16, T=20, mode='ann', augment=False)
     
-    inputs_snn = inputs_snn.to(DEVICE)
-    inputs_ann = inputs_ann.to(DEVICE)
+    # 测试少量样本
+    max_samples = 100  # 限制样本数量以加快实验
+    sample_count = 0
     
-    models = {
-        'SNN (Sparse)': SNN(T=20).to(DEVICE),
-        'Dense_SNN': DenseSNN(T=20).to(DEVICE),
-        'ANN': ANN().to(DEVICE)
+    device_id = 0  # 默认GPU设备ID
+    
+    print(f"  开始测量功耗与延迟 (最大样本数: {max_samples})")
+    
+    results = {
+        'model_type': [],
+        'sample_id': [],
+        'energy_mj': [],
+        'latency_ms': [],
+        'sparsity': [],
+        'avg_firing_rate': []
     }
     
-    results = []
+    # 根据是否可用决定是否测量功耗
+    if not NVML_AVAILABLE:
+        print("  [警告] NVML 不可用，仅测量延迟")
     
-    for name, model in models.items():
-        print(f"\n[测试] {name} ...")
-        model.eval()
-        is_snn = 'SNN' in name
-        inputs = inputs_snn if is_snn else inputs_ann
-        
-        # 1. SpikingJelly 理论 MACs/ACs 评估
-        if is_snn:
-            functional.reset_net(model)
-            # Todo: use spikingjelly hook if needed, but for now we focus on empirical
-            sp_monitor = SparsityMonitor(model)
-            _ = model(inputs)
-            stats = sp_monitor.get_sparsity_stats()
-            sparsity = stats.get('global_sparsity', 0.0)
-            avg_rate = stats.get('global_avg_rate', 1.0)
-        else:
-            sparsity = 0.0
-            avg_rate = 1.0
+    for batch_idx, ((inputs_snn, _), (inputs_ann, _)) in enumerate(zip(test_loader_snn, test_loader_ann)):
+        if sample_count >= max_samples:
+            break
             
-        # 2. 预热 (Warm-up)
-        for _ in range(POWER_WARMUP_ITERS):
-            if is_snn: functional.reset_net(model)
-            with torch.no_grad():
+        inputs_snn = inputs_snn.to(DEVICE)
+        inputs_ann = inputs_ann.to(DEVICE)
+        
+        # 对每种模型进行测试
+        models_config = [
+            ('SNN (Sparse)', snn_model, inputs_snn, True),
+            ('Dense_SNN', dense_snn_model, inputs_snn, True),
+            ('ANN', ann_model, inputs_ann, False)
+        ]
+        
+        for model_name, model, inputs, is_snn in models_config:
+            # 获取稀疏性信息
+            if is_snn:
+                functional.reset_net(model)
+                sp_monitor = SparsityMonitor(model)
                 _ = model(inputs)
+                stats = sp_monitor.get_sparsity_stats()
+                sparsity = stats.get('global_sparsity', 0.0)
+                avg_rate = stats.get('global_avg_rate', 1.0)
+            else:
+                sparsity = 0.0
+                avg_rate = 1.0
                 
-        torch.cuda.synchronize()
-        
-        # 3. 功耗与延迟测试
-        start_time = time.perf_counter()
-        power_samples = []
-        
-        for _ in range(POWER_TEST_ITERS):
-            if is_snn: functional.reset_net(model)
+            # 预热
+            for _ in range(POWER_WARMUP_ITERS):
+                if is_snn: 
+                    functional.reset_net(model)
+                with torch.no_grad():
+                    _ = model(inputs)
             
+            torch.cuda.synchronize()
+            
+            # 测量延迟和功耗
+            start_time = time.time()
+            if NVML_AVAILABLE:
+                start_power = measure_gpu_power(device_id)
+            else:
+                start_power = None
+                
             with torch.no_grad():
-                _ = model(inputs)
+                outputs = model(inputs)
                 
-            # 简单采样功率
-            power_samples.append(monitor.get_current_power())
+            torch.cuda.synchronize()
+            end_time = time.time()
+            latency_ms = (end_time - start_time) * 1000
             
-        torch.cuda.synchronize()
-        end_time = time.perf_counter()
-        
-        total_time_ms = (end_time - start_time) * 1000
-        avg_latency = total_time_ms / POWER_TEST_ITERS
-        
-        # 减去静态功耗的动态功耗
-        avg_power = max(0, sum(power_samples)/len(power_samples) - monitor.idle_power)
-        
-        # 能耗 = 功率 * 时间 (mJ)
-        energy_mJ = avg_power * (avg_latency / 1000.0) * 1000.0 # W * s * 1000 -> mJ
-        
-        res = {
-            'Model': name,
-            'Sparsity': sparsity,
-            'Avg_Firing_Rate': avg_rate,
-            'Latency_ms': avg_latency,
-            'Dynamic_Power_W': avg_power,
-            'Energy_per_Sample_mJ': energy_mJ
-        }
-        results.append(res)
-        
-        print(f"  稀疏度: {sparsity:.4f} | 延迟: {avg_latency:.2f} ms | 单样本能耗: {energy_mJ:.4f} mJ")
-        
+            if NVML_AVAILABLE:
+                end_power = measure_gpu_power(device_id)
+                avg_power = (start_power + end_power) / 2 if start_power and end_power else None
+                energy_mj = avg_power * (end_time - start_time) / 1000 if avg_power else None
+            else:
+                energy_mj = None
+                
+            # 记录结果（按样本记录）
+            batch_size = inputs.size(0)
+            for i in range(min(batch_size, max_samples - sample_count)):
+                results['model_type'].append(model_name)
+                results['sample_id'].append(sample_count)
+                results['energy_mj'].append(energy_mj)
+                results['latency_ms'].append(latency_ms)
+                results['sparsity'].append(sparsity)
+                results['avg_firing_rate'].append(avg_rate)
+                sample_count += 1
+                
+            if sample_count >= max_samples:
+                break
+    
+    # 保存结果
     df = pd.DataFrame(results)
     save_path = os.path.join(RESULTS_DIR, 'exp2_power_and_latency.csv')
     df.to_csv(save_path, index=False)
     print(f"\n实验2完成！结果已保存至 {save_path}")
+    
+    # 输出摘要统计
+    if not df.empty:
+        print("\n实验结果摘要:")
+        print(df.groupby('model_type')[['energy_mj', 'latency_ms', 'sparsity']].agg(['mean', 'std']))
 
 if __name__ == '__main__':
     run_experiment_2_power()

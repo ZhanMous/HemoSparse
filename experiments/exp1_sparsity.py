@@ -58,10 +58,10 @@ def run_experiment_1_sparsity():
                 'Global_Avg_Rate': stats.get('global_avg_rate', 0.0)
             }
             
-            # 记录各层
-            for k, v in stats.items():
-                if 'layer' in k:
-                    res[k] = v
+            # 添加各层信息
+            for key, value in stats.items():
+                if key not in ['global_sparsity', 'global_avg_rate']:
+                    res[key] = value
                     
             results.append(res)
             print(f"  T={T:2d} | V_th={v_th:.1f} | 稀疏度={res['Global_Sparsity']:.4f}")

@@ -1,8 +1,7 @@
-# -*- coding: utf-8 -*-
 """
-低功耗分析可视化
-- MACs / 功耗 / 延迟对比柱状图
-- 稀疏度与功耗散点图
+学术图表：能耗与延迟分析图
+- 关联分析：验证稀疏性与功耗的负相关性
+- 性能对比：SNN vs DenseSNN vs ANN 推理性能
 """
 
 import os
@@ -14,101 +13,93 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import FIGURES_DIR, RESULTS_DIR, FIG_DPI, COLORS
+from config import FIG_SIZE, FIG_DPI, COLORS, MARKERS, RESULTS_DIR, FIGURES_DIR
 
-plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'SimHei', 'Arial Unicode MS']
-plt.rcParams['axes.unicode_minus'] = False
-plt.rcParams['font.size'] = 11
 
-def plot_power_metrics():
-    """实测功耗与延迟对比柱状图"""
-    file_path = os.path.join(RESULTS_DIR, 'exp2_power_and_latency.csv')
-    if not os.path.exists(file_path):
-        print(f"找不到 {file_path}")
+def plot_power_and_latency_analysis():
+    """绘制功耗与延迟分析图"""
+    print("\n生成功耗与延迟分析图...")
+    
+    # 加载实验结果
+    result_file = os.path.join(RESULTS_DIR, 'exp2_power_and_latency.csv')
+    if not os.path.exists(result_file):
+        print(f"  [警告] 结果文件不存在: {result_file}")
         return
-        
-    df = pd.read_csv(file_path)
     
-    models = df['Model'].tolist()
-    models = [m.replace('SNN (Sparse)', 'SNN(A)').replace('Dense_SNN', 'DenseSNN(B)').replace('ANN', 'ANN(C)') for m in models]
+    df = pd.read_csv(result_file)
     
-    energy = df['Energy_per_Sample_mJ'].values
-    latency = df['Latency_ms'].values
+    # 过滤有效数据
+    df_valid = df[(df['energy_mj'].notna()) & (df['latency_ms'].notna())]
     
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    if df_valid.empty:
+        print("  [警告] 没有有效的功耗/延迟数据")
+        return
     
-    # 子图1：能耗
-    bars1 = ax1.bar(models, energy, color=COLORS, width=0.5, edgecolor='black', alpha=0.85)
-    ax1.set_ylabel('Energy per Sample (mJ)', fontsize=12)
-    ax1.set_title('Inference Energy Consumption (RTX 4070)', fontsize=13, fontweight='bold')
-    ax1.grid(axis='y', linestyle='--', alpha=0.5)
-    for b in bars1:
-        ax1.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.05 * max(energy), 
-                 f"{b.get_height():.2f}", ha='center', va='bottom', fontsize=10)
-                 
-    # 子图2：延迟
-    bars2 = ax2.bar(models, latency, color=COLORS, width=0.5, edgecolor='black', alpha=0.85)
-    ax2.set_ylabel('Latency (ms)', fontsize=12)
-    ax2.set_title('Inference Latency (RTX 4070)', fontsize=13, fontweight='bold')
-    ax2.grid(axis='y', linestyle='--', alpha=0.5)
-    for b in bars2:
-        ax2.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.05 * max(latency), 
-                 f"{b.get_height():.2f}", ha='center', va='bottom', fontsize=10)
-                 
+    # 计算各模型的平均值
+    grouped = df_valid.groupby('model_type').agg({
+        'energy_mj': ['mean', 'std'],
+        'latency_ms': ['mean', 'std']
+    }).round(4)
+    
+    # 重塑索引以方便访问
+    grouped.columns = ['_'.join(col).strip() for col in grouped.columns]
+    
+    # 获取模型类型列表
+    model_types = grouped.index.tolist()
+    
+    # 创建图表
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # 能耗柱状图
+    energy_means = [grouped.loc[m, 'energy_mj_mean'] for m in model_types]
+    energy_stds = [grouped.loc[m, 'energy_mj_std'] for m in model_types]
+    
+    bars1 = ax1.bar(model_types, energy_means, yerr=energy_stds, capsize=5,
+                    color=COLORS[:len(model_types)], alpha=0.7, edgecolor='black')
+    ax1.set_title('Inference Energy Consumption', fontsize=13, fontweight='bold')
+    ax1.set_ylabel('Energy (mJ)', fontsize=11)
+    ax1.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # 在柱子顶部添加数值标签
+    for bar, mean_val in zip(bars1, energy_means):
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height + (max(energy_means)*0.01),
+                 f'{mean_val:.2f}',
+                 ha='center', va='bottom', fontweight='bold')
+    
+    # 延迟柱状图
+    latency_means = [grouped.loc[m, 'latency_ms_mean'] for m in model_types]
+    latency_stds = [grouped.loc[m, 'latency_ms_std'] for m in model_types]
+    
+    bars2 = ax2.bar(model_types, latency_means, yerr=latency_stds, capsize=5,
+                    color=COLORS[:len(model_types)], alpha=0.7, edgecolor='black')
+    ax2.set_title('Inference Latency', fontsize=13, fontweight='bold')
+    ax2.set_ylabel('Latency (ms)', fontsize=11)
+    ax2.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # 在柱子顶部添加数值标签
+    for bar, mean_val in zip(bars2, latency_means):
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., height + (max(latency_means)*0.01),
+                 f'{mean_val:.2f}',
+                 ha='center', va='bottom', fontweight='bold')
+    
     plt.tight_layout()
-    save_path = os.path.join(FIGURES_DIR, 'power', 'power_and_latency_bars.png')
+    
+    # 保存图表
+    save_path = os.path.join(FIGURES_DIR, 'academic', 'power_and_latency_analysis.png')
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     fig.savefig(save_path, dpi=FIG_DPI)
     plt.close(fig)
     print(f"  [保存] {save_path}")
+    
+    # 打印摘要统计
+    print("\n功耗与延迟摘要统计:")
+    for model_type in model_types:
+        energy_mean = grouped.loc[model_type, 'energy_mj_mean']
+        latency_mean = grouped.loc[model_type, 'latency_ms_mean']
+        print(f"  {model_type}: 能耗={energy_mean:.2f}mJ, 延迟={latency_mean:.2f}ms")
 
-def plot_sparsity_vs_power_scatter():
-    """稀疏度与功耗散点图及拟合曲线"""
-    file_path = os.path.join(RESULTS_DIR, 'exp2_power_and_latency.csv')
-    if not os.path.exists(file_path): return
-    df = pd.read_csv(file_path)
-    
-    # 过滤掉 ANN 等非脉冲模型，仅针对 SNN (这里可以扩展)
-    snn_df = df[df['Model'].str.contains('SNN')]
-    if snn_df.empty: return
-    
-    sparsity = snn_df['Sparsity'].values
-    energy = snn_df['Energy_per_Sample_mJ'].values
-    names = snn_df['Model'].values
-    
-    fig, ax = plt.subplots(figsize=(7, 5))
-    
-    # 绘制散点
-    for i, txt in enumerate(names):
-        c = COLORS[0] if 'Sparse' in txt else COLORS[1]
-        ax.scatter(sparsity[i], energy[i], color=c, s=150, edgecolor='black', label=txt)
-        
-    ax.set_xlabel('Global Sparsity', fontsize=12)
-    ax.set_ylabel('Energy Consumption (mJ)', fontsize=12)
-    ax.set_title('Sparsity vs. Energy Consumption', fontsize=14, fontweight='bold')
-    ax.grid(True, linestyle=':', alpha=0.6)
-    ax.legend()
-    
-    # 如果有两个点，画一条虚线拟合
-    if len(sparsity) >= 2:
-        z = np.polyfit(sparsity, energy, 1)
-        p = np.poly1d(z)
-        x_trend = np.linspace(min(sparsity)*0.9, max(sparsity)*1.1, 100)
-        ax.plot(x_trend, p(x_trend), "r--", alpha=0.7, label=f"Trend: y={z[0]:.2f}x+{z[1]:.2f}")
-    
-    plt.tight_layout()
-    save_path = os.path.join(FIGURES_DIR, 'power', 'sparsity_vs_power.png')
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    fig.savefig(save_path, dpi=FIG_DPI)
-    plt.close(fig)
-    print(f"  [保存] {save_path}")
-
-def run_all_power_plots():
-    print("\n" + "="*60)
-    print("生成低功耗分析图表...")
-    print("="*60)
-    plot_power_metrics()
-    plot_sparsity_vs_power_scatter()
 
 if __name__ == '__main__':
-    run_all_power_plots()
+    plot_power_and_latency_analysis()

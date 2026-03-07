@@ -2,7 +2,7 @@
 """
 HemoSparse 统一训练主流程
 - 支持三组对照模型（SNN, DenseSNN, ANN）
-- RTX 4070 原生优化（显存自适应, AMP混合精度）
+- 现代GPU优化（显存自适应, AMP混合精度）
 - 稀疏性监控与日志持久化
 """
 
@@ -23,29 +23,33 @@ from config import (
 )
 from data.dataloader import get_blood_mnist_loaders
 from models.snn_model import SNN
+from models.improved_snn import ImprovedSNN
 from models.dense_snn_model import DenseSNN
 from models.ann_model import ANN
 from models.sparsity_hooks import SparsityMonitor
 
 class Trainer:
-    def __init__(self, model_type='snn', T=20, batch_size=None):
+    def __init__(self, model_type='snn', T=6, batch_size=None, encoding='direct'):
         self.model_type = model_type.lower()
         self.T = T
+        self.encoding = encoding
         set_seed()
         
         # 1. 准备数据
         mode = 'ann' if self.model_type == 'ann' else 'snn'
         self.train_loader, self.val_loader, self.test_loader, self.info = \
-            get_blood_mnist_loaders(batch_size=batch_size, T=T, mode=mode, augment=True)
+            get_blood_mnist_loaders(batch_size=batch_size, T=T, mode=mode, encoding=encoding, augment=True)
             
         # 2. 初始化模型
+        from config import SNN_ADAMW_LR
         if self.model_type == 'snn':
-            self.model = SNN(in_channels=3, num_classes=8, T=T).to(DEVICE)
-            self.optimizer = optim.SGD(self.model.parameters(), lr=SNN_LR, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY)
+            # 使用改进版 SNN
+            self.model = ImprovedSNN(in_channels=3, num_classes=8, T=T).to(DEVICE)
+            self.optimizer = optim.AdamW(self.model.parameters(), lr=SNN_ADAMW_LR, weight_decay=WEIGHT_DECAY)
             self.is_snn = True
         elif self.model_type == 'densesnn':
             self.model = DenseSNN(in_channels=3, num_classes=8, T=T).to(DEVICE)
-            self.optimizer = optim.SGD(self.model.parameters(), lr=SNN_LR, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY)
+            self.optimizer = optim.AdamW(self.model.parameters(), lr=SNN_ADAMW_LR, weight_decay=WEIGHT_DECAY)
             self.is_snn = True
         elif self.model_type == 'ann':
             self.model = ANN(in_channels=3, num_classes=8).to(DEVICE)
@@ -57,7 +61,8 @@ class Trainer:
         # 3. 损失函数与混合精度
         self.criterion = nn.CrossEntropyLoss()
         self.scaler = GradScaler(enabled=USE_AMP)
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=NUM_EPOCHS)
+        # 使用更先进的调度器
+        self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=10, T_mult=2)
         
         # 4. 稀疏性监控 (只针对 SNN)
         self.sparsity_monitor = SparsityMonitor(self.model) if self.is_snn else None
@@ -76,6 +81,9 @@ class Trainer:
             inputs, targets = inputs.to(DEVICE), targets.to(DEVICE).squeeze()
             
             self.optimizer.zero_grad()
+            
+            # 动态调整替代梯度 $\alpha$ (可选，这里先实现 ATan 默认控制)
+            # if self.is_snn: update_surrogate_alpha(self.model, epoch) 
             
             # AMP 混合精度前向传播
             with autocast(device_type='cuda', enabled=USE_AMP):
@@ -233,15 +241,16 @@ def run_all_models():
     epochs_original = NUM_EPOCHS 
     
     # 1. 对照组C：ANN
-    trainer_ann = Trainer(model_type='ann')
+    trainer_ann = Trainer(model_type='ann', T=1) # ANN 不需要多步
     trainer_ann.train()
     
-    # 2. 实验组A：标准SNN
-    trainer_snn = Trainer(model_type='snn')
+    # 2. 实验组A：改进版SNN (Direct Coding, T=6)
+    from config import DEFAULT_T
+    trainer_snn = Trainer(model_type='snn', T=DEFAULT_T, encoding='direct')
     trainer_snn.train()
     
-    # 3. 对照组B：稠密SNN
-    trainer_dense = Trainer(model_type='densesnn')
+    # 3. 对照组B：稠密SNN (用于对比稀疏性损失)
+    trainer_dense = Trainer(model_type='densesnn', T=DEFAULT_T, encoding='direct')
     trainer_dense.train()
     
     print("\n所有模型训练完成！结果见 outputs/results/training_summary.csv")

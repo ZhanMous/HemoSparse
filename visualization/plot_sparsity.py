@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 """
 稀疏性分析可视化
 - 生成 4+ 张量化 SNN 稀疏性的图表
@@ -51,42 +52,69 @@ def plot_sparsity_vs_epoch():
 
 def plot_sparsity_boxplots():
     """图2：三组对照模型的全局稀疏度对比箱线图"""
-    # 模拟数据，因为如果没有完整跑完训练拿不到真实数据
-    # 这里从实验2的 csv 里凑一些可视化用的 mock 数据，只要代码可用就行
-    file_path = os.path.join(RESULTS_DIR, 'exp2_power_and_latency.csv')
+    file_path = os.path.join(RESULTS_DIR, 'exp1_sparsity_quantification.csv')
     if not os.path.exists(file_path):
         print(f"找不到 {file_path}，跳过图2绘制")
         return
         
     df = pd.read_csv(file_path)
     
-    # 构造假数据分布以展示箱线图
+    # 按模型类型分组数据
+    # T=20, v_threshold=0.5 的条件下比较各种模型的稀疏度
     data = []
     labels = []
     
-    for i, row in df.iterrows():
-        base_sparsity = row['Sparsity']
-        # 添加一些正态噪声作为分布
-        samples = np.random.normal(loc=base_sparsity, scale=abs(0.05 * base_sparsity) + 0.001, size=100)
-        samples = np.clip(samples, 0, 1.0)
-        data.append(samples)
-        model_name = row['Model'].replace('SNN (Sparse)', 'SNN(A)').replace('Dense_SNN', 'DenseSNN(B)').replace('ANN', 'ANN(C)')
-        labels.append(model_name)
+    # 按T和v_threshold分组，获取不同条件下的稀疏度数据
+    grouped = df.groupby(['T', 'v_threshold'])
+    
+    # 为每种模型类型收集数据
+    unique_ts = sorted(df['T'].unique())
+    
+    for t_val in unique_ts:
+        t_data = df[df['T'] == t_val]
+        v_thresholds = sorted(t_data['v_threshold'].unique())
         
-    fig, ax = plt.subplots(figsize=(8, 5))
+        for v_thresh in v_thresholds:
+            subset = t_data[t_data['v_threshold'] == v_thresh]
+            if len(subset) > 0:
+                # 创建标签描述T和v_threshold的组合
+                label = f'T={t_val}, v_th={v_thresh}'
+                data.append(subset['Global_Sparsity'].values)
+                labels.append(label)
+                
+    # 如果数据过多，只选择一个特定的T值（例如T=20）
+    if len(unique_ts) > 1:
+        target_t = 20 if 20 in unique_ts else max(unique_ts)
+        t_data = df[df['T'] == target_t]
+        v_thresholds = sorted(t_data['v_threshold'].unique())
+        
+        data = []
+        labels = []
+        for v_thresh in v_thresholds:
+            subset = t_data[t_data['v_threshold'] == v_thresh]
+            if len(subset) > 0:
+                label = f'T={target_t}, v_th={v_thresh}'
+                data.append(subset['Global_Sparsity'].values)
+                labels.append(label)
+    
+    fig, ax = plt.subplots(figsize=(max(8, len(labels)*1.5), 5))
+    
+    # 确保有足够的颜色
+    colors_to_use = COLORS * (len(data) // len(COLORS) + 1)
     
     bplot = ax.boxplot(data, patch_artist=True, labels=labels)
     
-    for patch, color in zip(bplot['boxes'], COLORS):
-        patch.set_facecolor(color)
+    for i, patch in enumerate(bplot['boxes']):
+        patch.set_facecolor(colors_to_use[i % len(colors_to_use)])
         patch.set_alpha(0.7)
         
     for median in bplot['medians']:
         median.set(color='black', linewidth=1.5)
         
     ax.set_ylabel('Global Sparsity', fontsize=12)
-    ax.set_title('Global Sparsity Comparison across Models', fontsize=14, fontweight='bold')
+    ax.set_title('Global Sparsity Comparison across Thresholds', fontsize=14, fontweight='bold')
     ax.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.xticks(rotation=15)
     
     plt.tight_layout()
     save_path = os.path.join(FIGURES_DIR, 'sparsity', 'sparsity_boxplot.png')
@@ -103,28 +131,38 @@ def plot_layer_firing_rate():
         return
         
     df = pd.read_csv(file_path)
-    # 取 T=20， threshold=1.0 的那一组
+    # 取 T=20， v_threshold=1.0 的那一组
     sub_df = df[(df['T'] == 20) & (df['v_threshold'] == 1.0)]
-    if sub_df.empty: return
+    if sub_df.empty: 
+        print("未找到 T=20, V_th=1.0 的数据，跳过层级图")
+        return
     
-    cols = [c for c in sub_df.columns if 'layer' in c]
-    rates = sub_df[cols].values.flatten()
+    # 动态查找含有 layer 或特征提取器层名称的列
+    potential_cols = ['feature_extractor.2', 'feature_extractor.6', 'classifier.1']
+    cols = [c for c in sub_df.columns if c in potential_cols or ('layer' in c.lower() and c != 'v_threshold')]
     
-    layer_names = ['Conv1', 'Conv2', 'FC Classifier']
-    if len(rates) != 3:
-        layer_names = [f"L{i}" for i in range(len(rates))]
+    if not cols:
+        # 如果没有具体层数据，尝试拿 Global_Avg_Rate 充数展示一下
+        rates = [sub_df['Global_Avg_Rate'].values[0]]
+        layer_names = ['Global Average']
+    else:
+        rates = sub_df[cols].values.flatten()
+        layer_names = [c.split('.')[-1] if '.' in c else c for c in cols]
+        # 映射回更人类可读的名字
+        name_map = {'2': 'Conv Layer 1', '6': 'Conv Layer 2', '1': 'Output Layer'}
+        layer_names = [name_map.get(n, n) for n in layer_names]
         
-    fig, ax = plt.subplots(figsize=(8, 2))
-    im = ax.imshow([rates], cmap='Blues', aspect='auto', vmin=0, vmax=1.0)
+    fig, ax = plt.subplots(figsize=(max(6, len(rates)*2), 3))
+    im = ax.imshow([rates], cmap='Blues', aspect='equal', vmin=0, vmax=1.0)
     
     ax.set_xticks(range(len(rates)))
-    ax.set_xticklabels(layer_names)
+    ax.set_xticklabels(layer_names, rotation=15)
     ax.set_yticks([])
     ax.set_title('Layer-wise Firing Rates (SNN, T=20)', fontsize=14, fontweight='bold')
     
     for i, rate in enumerate(rates):
         color = 'white' if rate > 0.5 else 'black'
-        ax.text(i, 0, f"{rate:.3f}", ha="center", va="center", color=color, fontweight='bold')
+        ax.text(i, 0, f"{rate:.4f}", ha="center", va="center", color=color, fontweight='bold')
         
     cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label('Firing Rate', rotation=270, labelpad=15)

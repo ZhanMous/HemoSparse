@@ -2,7 +2,7 @@
 """
 BloodMNIST 数据加载与泊松脉冲编码
 - 适配 SpikingJelly 多步模式 [T, N, C, H, W]
-- RTX 4070 笔记本优化（pin_memory, num_workers, 自适应batch）
+- 现代GPU硬件优化（pin_memory, num_workers, 自适应batch）
 - 轻量级医疗影像增强（水平翻转 + ±5°旋转）
 """
 
@@ -60,19 +60,21 @@ class PoissonEncoder:
 class SpikeEncodedDataset(Dataset):
     """
     将 MedMNIST 数据集包装为泊松脉冲编码输出。
-    SNN模式：返回 [T, C, H, W] 脉冲序列
+    SNN模式：返回 [T, C, H, W] 脉冲序列 或 图像序列
     ANN模式：返回 [C, H, W] 原始图像
     """
-    def __init__(self, base_dataset, T: int, mode='snn'):
+    def __init__(self, base_dataset, T: int, mode='snn', encoding='poisson'):
         """
         Args:
             base_dataset: MedMNIST 数据集实例
             T: 时间步数
-            mode: 'snn' 返回脉冲编码, 'ann' 返回原始图像
+            mode: 'snn' 返回序列, 'ann' 返回原始图像
+            encoding: 'poisson' 泊松编码, 'direct' 直接编码 (复制图像)
         """
         self.base_dataset = base_dataset
         self.T = T
         self.mode = mode
+        self.encoding = encoding
         self.encoder = PoissonEncoder(T)
 
     def __len__(self):
@@ -83,9 +85,15 @@ class SpikeEncodedDataset(Dataset):
         label = label.squeeze().long() if isinstance(label, torch.Tensor) else int(label.squeeze())
 
         if self.mode == 'snn':
-            # 泊松编码: [C, H, W] → [T, C, H, W]
-            spikes = self.encoder(img)
-            return spikes, label
+            if self.encoding == 'poisson':
+                # 泊松编码: [C, H, W] → [T, C, H, W]
+                spikes = self.encoder(img)
+                return spikes, label
+            else:
+                # 直接编码 (Direct Coding): 直接复制 T 份图像
+                # [C, H, W] → [T, C, H, W]
+                direct_input = img.unsqueeze(0).repeat(self.T, 1, 1, 1)
+                return direct_input, label
         else:
             # ANN模式：直接返回原始图像
             return img, label
@@ -94,14 +102,15 @@ class SpikeEncodedDataset(Dataset):
 # ============================================================
 # 数据加载器（SNN / ANN 双模式）
 # ============================================================
-def get_blood_mnist_loaders(batch_size=None, T=DEFAULT_T, mode='snn', augment=True):
+def get_blood_mnist_loaders(batch_size=None, T=DEFAULT_T, mode='snn', encoding='direct', augment=True):
     """
     加载 BloodMNIST 数据集，返回 DataLoader。
 
     Args:
         batch_size: 批次大小，None 则自适应检测
         T: SNN 时间步数
-        mode: 'snn' 泊松编码 / 'ann' 原始图像
+        mode: 'snn' 脉冲突发 / 'ann' 原始图像
+        encoding: 'direct' (推荐) / 'poisson'
         augment: 是否启用数据增强（训练集）
 
     Returns:
@@ -144,9 +153,9 @@ def get_blood_mnist_loaders(batch_size=None, T=DEFAULT_T, mode='snn', augment=Tr
 
     # ---- 脉冲编码包装 ----
     if mode == 'snn':
-        train_dataset = SpikeEncodedDataset(train_dataset, T=T, mode='snn')
-        val_dataset = SpikeEncodedDataset(val_dataset, T=T, mode='snn')
-        test_dataset = SpikeEncodedDataset(test_dataset, T=T, mode='snn')
+        train_dataset = SpikeEncodedDataset(train_dataset, T=T, mode='snn', encoding=encoding)
+        val_dataset = SpikeEncodedDataset(val_dataset, T=T, mode='snn', encoding=encoding)
+        test_dataset = SpikeEncodedDataset(test_dataset, T=T, mode='snn', encoding=encoding)
 
     # ---- DataLoader（4070优化）----
     train_loader = DataLoader(

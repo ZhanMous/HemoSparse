@@ -26,24 +26,44 @@ class SparsityMonitor:
         stats = {}
         layer_rates = []
         
-        # SpikingJelly monitor.records 是一个列表，列表的每个元素对应一个被监控的神经元层出的记录列表
-        monitored_names = [name for name, _ in self.net.named_modules() if isinstance(_, neuron.LIFNode)]
-        
-        for i, module_records in enumerate(self.monitor.records):
-            if len(module_records) > 0:
-                # module_records 也是一个 list，存储了该层历次前向传播的输出
-                out_spikes = module_records[-1] # 取最后一次前向传播的脉冲数据
-                
-                # 发放率 = 脉冲均值 (脉冲为 0 或 1)
-                firing_rate = float(out_spikes.mean().item())
-                name = monitored_names[i] if i < len(monitored_names) else f"layer_{i}"
-                stats[name] = firing_rate
-                layer_rates.append(firing_rate)
+        # 检查 monitor.records 的类型并相应处理
+        records = self.monitor.records
+        try:
+            # 尝试作为字典处理
+            for mod, module_records in records.items():
+                if len(module_records) > 0:
+                    out_spikes = module_records[-1] # 取最后一次前向传播的脉冲数据
+                    firing_rate = float(out_spikes.mean().item())
+                    
+                    # 查找模块名
+                    found_name = f"layer_{len(layer_rates)}"
+                    for name, m in self.net.named_modules():
+                        if m is mod:
+                            found_name = name
+                            break
+                    
+                    stats[found_name] = firing_rate
+                    layer_rates.append(firing_rate)
+        except AttributeError:
+            # 如果不是字典，假设是列表
+            for i, module_records in enumerate(records):
+                if len(module_records) > 0:
+                    out_spikes = module_records[-1] # 取最后一次前向传播的脉冲数据
+                    firing_rate = float(out_spikes.mean().item())
+                    
+                    # 为列表元素生成名称
+                    found_name = f"layer_{i}"
+                    stats[found_name] = firing_rate
+                    layer_rates.append(firing_rate)
                 
         if layer_rates:
             avg_rate = sum(layer_rates) / len(layer_rates)
             stats['global_avg_rate'] = avg_rate
             stats['global_sparsity'] = 1.0 - avg_rate
+        else:
+            # 如果没有记录任何层，默认完全稀疏
+            stats['global_avg_rate'] = 0.0
+            stats['global_sparsity'] = 1.0
             
         # 清除记录，准备下一次前向传播
         self.monitor.clear_recorded_data()
