@@ -18,7 +18,7 @@ from models import SNN, DenseSNN, ANN
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, precision_score, recall_score
 import csv
 
 # 统计检验函数
@@ -60,7 +60,7 @@ def train_shadow_model(model_name, shadow_id, seed):
     np.random.seed(seed)
     
     # 加载数据
-    train_loader, test_loader = get_blood_mnist_loaders(batch_size=BATCH_SIZE)
+    train_loader, val_loader, test_loader, info = get_blood_mnist_loaders(batch_size=BATCH_SIZE)
     
     # 分割训练数据为成员和非成员
     train_dataset = train_loader.dataset
@@ -179,18 +179,36 @@ def run_mia_attack(model_name):
     
     # 测试攻击模型
     y_pred = attack_model.predict(X_test)
+    y_pred_proba = attack_model.predict_proba(X_test)[:, 1]
+    
+    # 计算完整指标
     attack_acc = accuracy_score(y_test, y_pred)
+    attack_auc = roc_auc_score(y_test, y_pred_proba)
+    attack_f1 = f1_score(y_test, y_pred)
+    attack_precision = precision_score(y_test, y_pred, zero_division=0)
+    attack_recall = recall_score(y_test, y_pred)
     
-    print(f"\n{model_name} MIA 攻击准确率: {attack_acc:.4f}")
+    print(f"\n{model_name} MIA 攻击指标:")
+    print(f"  Accuracy: {attack_acc:.4f}")
+    print(f"  AUC: {attack_auc:.4f}")
+    print(f"  F1: {attack_f1:.4f}")
+    print(f"  Precision: {attack_precision:.4f}")
+    print(f"  Recall: {attack_recall:.4f}")
     
-    return attack_acc
+    return {
+        'accuracy': attack_acc,
+        'auc': attack_auc,
+        'f1': attack_f1,
+        'precision': attack_precision,
+        'recall': attack_recall
+    }
 
 # 训练过拟合 ANN（无 weight_decay，100 epoch）
 def train_overfit_ann():
     print("\n=== 训练过拟合 ANN ===")
     
     # 加载数据
-    train_loader, test_loader = get_blood_mnist_loaders(batch_size=BATCH_SIZE)
+    train_loader, val_loader, test_loader, info = get_blood_mnist_loaders(batch_size=BATCH_SIZE)
     
     # 初始化模型
     model = ANN()
@@ -240,15 +258,28 @@ def main():
     # 运行 MIA 攻击（5 次重复实验）
     all_mia_results = {}
     for model in models:
-        all_mia_results[model] = []
+        all_mia_results[model] = {
+            'accuracy': [],
+            'auc': [],
+            'f1': [],
+            'precision': [],
+            'recall': []
+        }
         print(f"\n=== 执行 {model} 的 MIA 攻击 ({NUM_REPEATS} 次重复) ===")
         for repeat in range(NUM_REPEATS):
             print(f"\n--- 第 {repeat+1} 次重复实验 ---")
-            acc = run_mia_attack(model)
-            all_mia_results[model].append(acc)
+            metrics = run_mia_attack(model)
+            for metric in metrics:
+                all_mia_results[model][metric].append(metrics[metric])
     
-    # 训练过拟合 ANN 并测试其 MIA 攻击准确率
-    overfit_ann_results = []
+    # 训练过拟合 ANN 并测试其 MIA 攻击指标
+    all_mia_results['Overfit ANN'] = {
+        'accuracy': [],
+        'auc': [],
+        'f1': [],
+        'precision': [],
+        'recall': []
+    }
     print(f"\n=== 训练过拟合 ANN 并执行 MIA 攻击 ({NUM_REPEATS} 次重复) ===")
     for repeat in range(NUM_REPEATS):
         print(f"\n--- 过拟合 ANN 第 {repeat+1} 次重复实验 ---")
@@ -283,39 +314,59 @@ def main():
         
         # 测试攻击模型
         y_pred = attack_model.predict(X_test)
-        overfit_ann_mia_acc = accuracy_score(y_test, y_pred)
+        y_pred_proba = attack_model.predict_proba(X_test)[:, 1]
         
-        overfit_ann_results.append(overfit_ann_mia_acc)
-        print(f"过拟合 ANN 第 {repeat+1} 次 MIA 攻击准确率: {overfit_ann_mia_acc:.4f}")
-    
-    all_mia_results['Overfit ANN'] = overfit_ann_results
+        # 计算完整指标
+        overfit_ann_mia = {
+            'accuracy': accuracy_score(y_test, y_pred),
+            'auc': roc_auc_score(y_test, y_pred_proba),
+            'f1': f1_score(y_test, y_pred),
+            'precision': precision_score(y_test, y_pred, zero_division=0),
+            'recall': recall_score(y_test, y_pred)
+        }
+        
+        for metric in overfit_ann_mia:
+            all_mia_results['Overfit ANN'][metric].append(overfit_ann_mia[metric])
+        
+        print(f"过拟合 ANN 第 {repeat+1} 次 MIA 攻击指标:")
+        print(f"  Accuracy: {overfit_ann_mia['accuracy']:.4f}")
+        print(f"  AUC: {overfit_ann_mia['auc']:.4f}")
+        print(f"  F1: {overfit_ann_mia['f1']:.4f}")
+        print(f"  Precision: {overfit_ann_mia['precision']:.4f}")
+        print(f"  Recall: {overfit_ann_mia['recall']:.4f}")
     
     # 计算均值和标准差
     summary_results = {}
     for model in all_mia_results:
-        mean_acc = np.mean(all_mia_results[model])
-        std_acc = np.std(all_mia_results[model])
-        summary_results[model] = {'mean': mean_acc, 'std': std_acc, 'values': all_mia_results[model]}
+        summary_results[model] = {}
+        for metric in all_mia_results[model]:
+            mean_val = np.mean(all_mia_results[model][metric])
+            std_val = np.std(all_mia_results[model][metric])
+            summary_results[model][metric] = {'mean': mean_val, 'std': std_val, 'values': all_mia_results[model][metric]}
     
     # 统计检验（与 ANN 对比）
     significance = {}
     if 'ANN' in all_mia_results:
-        ann_values = all_mia_results['ANN']
+        ann_accuracy_values = all_mia_results['ANN']['accuracy']
         for model in all_mia_results:
             if model != 'ANN' and model != 'Overfit ANN':
-                t_stat, p_value = t_test(ann_values, all_mia_results[model])
+                t_stat, p_value = t_test(ann_accuracy_values, all_mia_results[model]['accuracy'])
                 significance[model] = {'t_stat': t_stat, 'p_value': p_value, 'label': get_significance_label(p_value)}
     
     # 保存结果
     csv_path = os.path.join(OUTPUT_DIR, 'mia_results.csv')
     with open(csv_path, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['Model', 'MIA Accuracy (Mean ± Std)', 'Significance (vs ANN)'])
+        writer.writerow(['Model', 'Accuracy (Mean ± Std)', 'AUC (Mean ± Std)', 'F1 (Mean ± Std)', 'Precision (Mean ± Std)', 'Recall (Mean ± Std)', 'Significance (vs ANN)'])
         for model in summary_results:
             sig_label = significance.get(model, {}).get('label', '')
             writer.writerow([
                 model, 
-                f"{summary_results[model]['mean']:.4f} ± {summary_results[model]['std']:.4f}",
+                f"{summary_results[model]['accuracy']['mean']:.4f} ± {summary_results[model]['accuracy']['std']:.4f}",
+                f"{summary_results[model]['auc']['mean']:.4f} ± {summary_results[model]['auc']['std']:.4f}",
+                f"{summary_results[model]['f1']['mean']:.4f} ± {summary_results[model]['f1']['std']:.4f}",
+                f"{summary_results[model]['precision']['mean']:.4f} ± {summary_results[model]['precision']['std']:.4f}",
+                f"{summary_results[model]['recall']['mean']:.4f} ± {summary_results[model]['recall']['std']:.4f}",
                 sig_label
             ])
     
@@ -323,14 +374,16 @@ def main():
     print(f"结果已保存到 {csv_path}")
     
     # 打印结果
-    print("\nMIA 攻击准确率 (均值 ± 标准差):")
+    print("\nMIA 攻击完整指标 (均值 ± 标准差):")
     for model in summary_results:
         sig_label = significance.get(model, {}).get('label', '')
-        print(f"  {model}: {summary_results[model]['mean']:.4f} ± {summary_results[model]['std']:.4f} {sig_label}")
+        print(f"\n  {model} {sig_label}:")
+        for metric in ['accuracy', 'auc', 'f1', 'precision', 'recall']:
+            print(f"    {metric}: {summary_results[model][metric]['mean']:.4f} ± {summary_results[model][metric]['std']:.4f}")
     
     # 打印统计检验结果
     if significance:
-        print("\n统计检验结果 (双侧 t 检验 vs ANN):")
+        print("\n统计检验结果 (双侧 t 检验 vs ANN, 仅对比 Accuracy):")
         for model in significance:
             print(f"  {model}: t={significance[model]['t_stat']:.4f}, p={significance[model]['p_value']:.4f} {significance[model]['label']}")
 
