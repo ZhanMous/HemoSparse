@@ -152,10 +152,9 @@ def get_blood_mnist_loaders(batch_size=None, T=DEFAULT_T, mode='snn', encoding='
                              download=True, root=DATA_ROOT, size=28)
 
     # ---- 脉冲编码包装 ----
-    if mode == 'snn':
-        train_dataset = SpikeEncodedDataset(train_dataset, T=T, mode='snn', encoding=encoding)
-        val_dataset = SpikeEncodedDataset(val_dataset, T=T, mode='snn', encoding=encoding)
-        test_dataset = SpikeEncodedDataset(test_dataset, T=T, mode='snn', encoding=encoding)
+    train_dataset = SpikeEncodedDataset(train_dataset, T=T, mode=mode, encoding=encoding)
+    val_dataset = SpikeEncodedDataset(val_dataset, T=T, mode=mode, encoding=encoding)
+    test_dataset = SpikeEncodedDataset(test_dataset, T=T, mode=mode, encoding=encoding)
 
     # ---- DataLoader（4070优化）----
     train_loader = DataLoader(
