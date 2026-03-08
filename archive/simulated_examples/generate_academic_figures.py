@@ -62,16 +62,46 @@ def read_mia_results():
 
 # 读取消融实验结果
 def read_ablation_results():
-    csv_path = os.path.join('outputs', 'ablation_results.csv')
+    # 尝试从若干可能的 ablation CSV 中读取真实数据
+    candidates = [
+        os.path.join('outputs', 'p1_plif_ablation.csv'),
+        os.path.join('outputs', 'ablation_results.csv'),
+        os.path.join('outputs', 'sparsity_results.csv')
+    ]
     results = []
-    with open(csv_path, 'r') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            results.append({
-                'v_threshold': float(row['v_threshold']),
-                'sparsity': float(row['sparsity'].split(' ± ')[0]),
-                'test_acc': float(row['test_acc'].split(' ± ')[0])
-            })
+    for csv_path in candidates:
+        if not os.path.exists(csv_path):
+            continue
+        try:
+            with open(csv_path, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    entry = {}
+                    if 'v_threshold' in row:
+                        try:
+                            entry['v_threshold'] = float(row['v_threshold'])
+                        except Exception:
+                            entry['v_threshold'] = None
+                    if 'sparsity' in row:
+                        try:
+                            entry['sparsity'] = float(str(row['sparsity']).split()[0])
+                        except Exception:
+                            entry['sparsity'] = None
+                    if 'mia_acc' in row:
+                        try:
+                            entry['mia_acc'] = float(str(row['mia_acc']).split()[0])
+                        except Exception:
+                            entry['mia_acc'] = None
+                    if 'test_acc' in row:
+                        try:
+                            entry['test_acc'] = float(str(row['test_acc']).split()[0])
+                        except Exception:
+                            entry['test_acc'] = None
+                    # only keep rows with at least one useful metric
+                    if any(v is not None for v in entry.values()):
+                        results.append(entry)
+        except Exception:
+            continue
     return results
 
 # 生成模型性能柱状图
@@ -98,37 +128,71 @@ def plot_model_performance():
 
 # 生成稀疏度与 MIA 鲁棒性关系图
 def plot_sparsity_vs_mia():
-    # 模拟数据，实际应从实验结果中读取
-    sparsity = [0.6, 0.7, 0.8, 0.9]
-    mia_acc = [0.65, 0.62, 0.58, 0.55]
-    
+    rows = read_ablation_results()
+    if not rows:
+        print('警告: 未找到消融实验数据，跳过 sparsity vs MIA 绘图')
+        return
+
+    sparsity = [r.get('sparsity') for r in rows if r.get('sparsity') is not None]
+    mia_acc = [r.get('mia_acc') for r in rows if r.get('mia_acc') is not None]
+
+    if len(sparsity) == 0 or len(mia_acc) == 0:
+        print('警告: 消融数据中缺少 sparsity 或 mia_acc 字段，跳过绘图')
+        return
+
     fig, ax = plt.subplots()
     ax.plot(sparsity, mia_acc, 'o-', color='#1f77b4', label='MIA Accuracy')
-    
+
     ax.set_xlabel('Sparsity')
     ax.set_ylabel('MIA Attack Accuracy')
     ax.set_title('Sparsity vs MIA Robustness')
     ax.legend()
-    
+
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, 'sparsity_vs_mia.png'))
     print('Sparsity vs MIA plot saved')
 
 # 生成置信度分布直方图
 def plot_confidence_distribution():
-    # 模拟数据
-    member_conf = np.random.normal(0.8, 0.1, 1000)
-    non_member_conf = np.random.normal(0.6, 0.15, 1000)
-    
+    # 尝试从 outputs 中读取置信度分布（如果存在）
+    conf_csv = os.path.join('outputs', 'mia_confidence_distribution.csv')
+    if not os.path.exists(conf_csv):
+        print('警告: 未找到置信度分布文件 (outputs/mia_confidence_distribution.csv)，跳过绘图')
+        return
+
+    member_conf = []
+    non_member_conf = []
+    try:
+        with open(conf_csv, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get('label') == 'member':
+                    try:
+                        member_conf.append(float(row['confidence']))
+                    except Exception:
+                        continue
+                elif row.get('label') == 'non_member':
+                    try:
+                        non_member_conf.append(float(row['confidence']))
+                    except Exception:
+                        continue
+    except Exception:
+        print('警告: 读取置信度分布文件失败，跳过绘图')
+        return
+
+    if len(member_conf) == 0 or len(non_member_conf) == 0:
+        print('警告: 置信度分布数据不完整，跳过绘图')
+        return
+
     fig, ax = plt.subplots()
     sns.histplot(member_conf, bins=30, alpha=0.6, label='Members', color='#1f77b4', ax=ax)
     sns.histplot(non_member_conf, bins=30, alpha=0.6, label='Non-members', color='#ff7f0e', ax=ax)
-    
+
     ax.set_xlabel('Confidence')
     ax.set_ylabel('Frequency')
     ax.set_title('Confidence Distribution: Members vs Non-members')
     ax.legend()
-    
+
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, 'confidence_distribution.png'))
     print('Confidence distribution plot saved')

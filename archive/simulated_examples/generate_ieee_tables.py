@@ -227,7 +227,20 @@ def generate_all_tables():
 
 def main():
     print("=== 生成 IEEE 三线表 ===")
-    generate_sample_results()
+    # 仅在 outputs 下存在真实实验结果时生成表格
+    expected_files = [
+        os.path.join(OUTPUT_DIR, 'training_summary.csv'),
+        os.path.join(OUTPUT_DIR, 'sparsity_results.csv'),
+        os.path.join(OUTPUT_DIR, 'mia_results.csv'),
+        os.path.join(OUTPUT_DIR, 'power_results.csv'),
+        os.path.join(OUTPUT_DIR, 'ablation_results.csv')
+    ]
+    found = [f for f in expected_files if os.path.exists(f)]
+    if not found:
+        print('警告: 未在 outputs 下找到实验结果 CSV。此脚本不再生成模拟结果。')
+        print('请先运行真实实验以生成 CSV，或调用 generate_sample_results() 手动生成示例数据（仅用于测试）。')
+        return
+
     generate_all_tables()
     print("\n=== 所有 IEEE 三线表生成完成 ===")
 

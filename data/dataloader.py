@@ -20,8 +20,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import (
     DATA_ROOT, DATA_FLAG, DEFAULT_T, IN_CHANNELS,
     DEFAULT_BATCH_SIZE, NUM_WORKERS, PIN_MEMORY,
-    get_adaptive_batch_size, set_seed, SEED
+    get_adaptive_batch_size
 )
+
+
+def _seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
 
 
 # ============================================================
@@ -102,7 +107,16 @@ class SpikeEncodedDataset(Dataset):
 # ============================================================
 # 数据加载器（SNN / ANN 双模式）
 # ============================================================
-def get_blood_mnist_loaders(batch_size=None, T=DEFAULT_T, mode='snn', encoding='direct', augment=True):
+def get_blood_mnist_loaders(
+    batch_size=None,
+    T=DEFAULT_T,
+    mode='snn',
+    encoding='direct',
+    augment=True,
+    seed=None,
+    num_workers=None,
+    pin_memory=None,
+):
     """
     加载 BloodMNIST 数据集，返回 DataLoader。
 
@@ -116,10 +130,19 @@ def get_blood_mnist_loaders(batch_size=None, T=DEFAULT_T, mode='snn', encoding='
     Returns:
         train_loader, val_loader, test_loader, info
     """
-    set_seed(SEED)
-
     if batch_size is None:
         batch_size = get_adaptive_batch_size()
+
+    if num_workers is None:
+        num_workers = NUM_WORKERS
+
+    if pin_memory is None:
+        pin_memory = PIN_MEMORY
+
+    generator = None
+    if seed is not None:
+        generator = torch.Generator()
+        generator.manual_seed(seed)
 
     info = INFO[DATA_FLAG]
     DataClass = getattr(medmnist, info['python_class'])
@@ -159,15 +182,25 @@ def get_blood_mnist_loaders(batch_size=None, T=DEFAULT_T, mode='snn', encoding='
     # ---- DataLoader（4070优化）----
     train_loader = DataLoader(
         dataset=train_dataset, batch_size=batch_size, shuffle=True,
-        num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY, drop_last=True
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        drop_last=True,
+        worker_init_fn=_seed_worker,
+        generator=generator,
     )
     val_loader = DataLoader(
         dataset=val_dataset, batch_size=batch_size, shuffle=False,
-        num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        worker_init_fn=_seed_worker,
+        generator=generator,
     )
     test_loader = DataLoader(
         dataset=test_dataset, batch_size=batch_size, shuffle=False,
-        num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        worker_init_fn=_seed_worker,
+        generator=generator,
     )
 
     n_train = len(train_dataset)
@@ -175,7 +208,7 @@ def get_blood_mnist_loaders(batch_size=None, T=DEFAULT_T, mode='snn', encoding='
     n_test = len(test_dataset)
     print(f"[HemoSparse] BloodMNIST 加载完成 | 模式={mode} | T={T}")
     print(f"  训练集: {n_train} | 验证集: {n_val} | 测试集: {n_test}")
-    print(f"  batch_size={batch_size} | num_workers={NUM_WORKERS} | pin_memory={PIN_MEMORY}")
+    print(f"  batch_size={batch_size} | num_workers={num_workers} | pin_memory={pin_memory}")
     print(f"  类别: {list(info['label'].values())}")
 
     return train_loader, val_loader, test_loader, info

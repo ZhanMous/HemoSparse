@@ -1,263 +1,101 @@
 # HemoSparse
 
-[![Conference](https://img.shields.io/badge/NeurIPS-IEEE%20TMI-blue.svg)](https://neurips.cc)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.1+-red.svg)](https://pytorch.org)
+HemoSparse 是一个围绕 BloodMNIST 的研究型代码库，用于比较稀疏脉冲神经网络、非稀疏对照模型与 ANN 在准确率、隐私攻击鲁棒性与理论能效上的差异。
 
-## 论文信息
+## 当前仓库范围
 
-**题目**：HemoSparse: Privacy-Protected Medical Image Classification with Sparse Spiking Neural Networks  
-**会议/期刊**：NeurIPS / IEEE Transactions on Medical Imaging (TMI)  
-**作者**：[作者团队]  
-**日期**：2026年3月8日
+这个仓库当前包含的是研究代码和论文材料，不是一个通用 Python 包。实际可运行的核心入口如下：
 
----
+- train.py：训练 SNN、DenseSNN、ANN，并生成训练摘要。
+- mia_attack.py：运行成员推理攻击实验。
+- p1_ablation_studies.py：执行 P1 消融实验。
+- control_variable_ablation.py：执行控制变量实验。
+- calculate_flops.py：计算理论计算量。
+- generate_academic_figures.py、generate_public_figures.py、generate_ieee_tables.py：生成图表与表格。
 
-## 核心亮点
-
-HemoSparse框架探讨脉冲神经网络（SNN）的天然稀疏性在医疗AI隐私保护与低功耗推理方面的潜力。
-
-### 核心结果
-
-| 指标 | ANN | SNN (本文方法) | 相对优势 |
-|------|-----|---------------|---------|
-| 测试准确率 | 95.59% ± 0.11% | 93.63% ± 0.28% | 略低1.96% |
-| MIA攻击准确率 | 0.628 ± 0.021 | 0.500 ± 0.015 | **降低20.4%** |
-| 全局稀疏度 | 0.000 | 0.997 ± 0.001 | **高稀疏性** |
-| 理论MACs节省 | 0.0% | 99.7% | **能效优势显著** |
-
-### 核心结论
-
-1. **隐私保护**：SNN的稀疏激活模式显著降低了模型对训练数据的记忆程度，使其对成员推理攻击（MIA）的准确率降至接近随机猜测水平（0.500±0.015）
-2. **跨架构普适性**：开发了轻量化Spiking Transformer模型（参数量0.119M），验证了稀疏性优势在Transformer架构上的普适性
-3. **理论能效优势**：SNN在专用神经形态芯片上可节省99.7%的有效MAC操作，展现出显著的能效潜力
-
----
-
-## 环境配置
-
-### 系统要求
+## 环境要求
 
 - Python 3.10+
-- PyTorch 2.1+
-- SpikingJelly ≥0.0.0.0.14
-- CUDA 11.8+ (推荐)
+- PyTorch 2.1
+- torchvision 0.16
+- SpikingJelly 0.0.14
+- medmnist 3.0.0
 
-### 快速安装
+推荐直接安装 requirements.txt 中锁定的版本。
 
 ```bash
-# 克隆仓库
-git clone https://github.com/your-username/HemoSparse.git
-cd HemoSparse
-
-# 创建虚拟环境
-conda create -n hemosparse python=3.10
-conda activate hemosparse
-
-# 安装依赖
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip install spikingjelly medmnist matplotlib numpy scipy scikit-learn pandas
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
-
-### 依赖库
-
-```txt
-torch>=2.1.0
-torchvision>=0.16.0
-spikingjelly>=0.0.0.0.14
-medmnist>=3.0.0
-matplotlib>=3.7.0
-numpy>=1.24.0
-scipy>=1.10.0
-scikit-learn>=1.3.0
-pandas>=2.0.0
-pynvml>=11.5.0
-```
-
----
 
 ## 快速开始
 
-### 1. 数据准备
-
-BloodMNIST数据集会自动下载，无需手动准备：
-
-```python
-import medmnist
-from medmnist import BloodMNIST
-
-# 自动下载数据集
-train_dataset = BloodMNIST(split='train', download=True)
-test_dataset = BloodMNIST(split='test', download=True)
-```
-
-### 2. 一键复现核心实验
+训练全部主模型：
 
 ```bash
-# 复现所有核心实验（训练+测试+攻击）
-bash reproduce.sh
-
-# 或分步运行
-python train.py --model ann    # 训练ANN
-python train.py --model snn    # 训练SNN
-python attack.py                # 执行MIA攻击
-python evaluate.py              # 评估所有指标
+python train.py
 ```
 
-### 3. 单模型训练
+从某个模型开始继续训练：
 
-```python
-from models import SNN, ANN, DenseSNN
-from train import train_model
-
-# 训练SNN
-model = SNN()
-train_model(model, model_name='snn', epochs=50, lr=1e-3)
-
-# 训练ANN
-model = ANN()
-train_model(model, model_name='ann', epochs=50, lr=1e-3)
+```bash
+python train.py DenseSNN
 ```
 
-### 4. MIA攻击
+启用严格可复现模式：
 
-```python
-from attack import MembershipInferenceAttack
-
-# 执行MIA攻击
-attack = MembershipInferenceAttack(target_model='snn')
-mia_accuracy = attack.evaluate()
-print(f"MIA攻击准确率: {mia_accuracy:.4f}")
+```bash
+python train.py SNN --deterministic
 ```
 
----
+运行基础测试：
 
-## 仓库结构
-
+```bash
+pytest
 ```
+
+执行隐私攻击实验：
+
+```bash
+python mia_attack.py
+```
+
+## 目录说明
+
+```text
 HemoSparse/
-├── README.md                          # 本文件
-├── LICENSE                            # 许可证
-├── FINAL_RESEARCH_PAPER.md           # 论文全文（Markdown格式）
-├── RESPONSE_TO_REVIEWERS.md          # 评审响应文档
-├── SUPPLEMENTARY_MATERIAL.md         # 会议补充材料
-│
-├── code/                              # 完整代码
-│   ├── __init__.py
-│   ├── models.py                      # 模型定义（SNN/ANN/DenseSNN）
-│   ├── train.py                       # 训练脚本
-│   ├── test.py                        # 测试脚本
-│   ├── attack.py                      # MIA攻击脚本
-│   ├── influence_functions.py         # 影响函数计算
-│   ├── datasets.py                    # 数据加载
-│   └── utils.py                       # 工具函数
-│
-├── pretrained/                        # 预训练权重
-│   ├── ann_best.pth                   # ANN最佳模型
-│   ├── snn_best.pth                   # SNN最佳模型
-│   ├── densesnn_best.pth              # DenseSNN最佳模型
-│   └── spiking_transformer_best.pth  # Spiking Transformer最佳模型
-│
-├── reproduce/                         # 复现脚本与原始数据
-│   ├── reproduce.sh                   # 一键复现脚本
-│   ├── plot_figures.py                # 图表生成脚本
-│   └── raw_data/                      # 原始实验数据
-│       ├── model_performance.csv
-│       ├── mia_results.csv
-│       ├── power_measurements.csv
-│       └── ablation_studies.csv
-│
-├── outputs/                           # 输出目录
-│   ├── figures/                       # 实验图表
-│   │   ├── model_performance.png
-│   │   ├── sparsity_vs_mia.png
-│   │   ├── confidence_distribution.png
-│   │   ├── power_latency.png
-│   │   ├── spiking_transformer_performance.png
-│   │   ├── transformer_sparsity_vs_mia.png
-│   │   └── high_res/                  # 高分辨率图表（300 DPI）
-│   │
-│   └── tables/                        # 实验表格
-│       ├── table_i_performance.csv
-│       ├── table_ii_sparsity.csv
-│       └── ...
-│
-└── docs/                              # 文档
-    ├── paper.pdf                      # 论文PDF
-    ├── supplementary_material.pdf    # 补充材料PDF
-    └── response_to_reviewers.pdf     # 评审响应PDF
+├── config.py
+├── models.py
+├── train.py
+├── mia_attack.py
+├── calculate_flops.py
+├── p1_ablation_studies.py
+├── control_variable_ablation.py
+├── memorization_analysis.py
+├── data/
+│   └── dataloader.py
+├── tests/
+│   └── test_smoke.py
+├── outputs/
+│   ├── *.csv
+│   ├── *.pth
+│   └── figures/
+└── *.md
 ```
 
----
+## 仓库约定
 
-## 论文引用
+- outputs 目录默认存放运行产物。
+- data/raw 目录可能包含自动下载的数据。
+- 根目录 Markdown 文件主要用于论文、补充材料与投稿记录。
+- 仓库中的测试以“快速形状校验”和“轻量模型一致性检查”为主，不覆盖完整训练流程。
 
-如果您在研究中使用了本项目的代码或方法，请引用我们的论文：
+## 已知限制
 
-```bibtex
-@inproceedings{hemosparse2026,
-  title={HemoSparse: Privacy-Protected Medical Image Classification with Sparse Spiking Neural Networks},
-  author={[作者姓名]},
-  booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
-  year={2026}
-}
-```
-
-或（IEEE TMI版本）：
-
-```bibtex
-@article{hemosparse2026tmi,
-  title={HemoSparse: Privacy-Protected Medical Image Classification with Sparse Spiking Neural Networks},
-  author={[作者姓名]},
-  journal={IEEE Transactions on Medical Imaging},
-  year={2026},
-  publisher={IEEE}
-}
-```
-
----
-
-## 复现说明
-
-### 完整复现流程
-
-1. **环境配置**（5分钟）
-   ```bash
-   conda env create -f environment.yml
-   conda activate hemosparse
-   ```
-
-2. **数据准备**（自动下载，5分钟）
-   ```bash
-   python prepare_data.py
-   ```
-
-3. **模型训练**（约2小时）
-   ```bash
-   python train_all_models.py
-   ```
-
-4. **攻击执行**（约30分钟）
-   ```bash
-   python run_all_attacks.py
-   ```
-
-5. **结果评估**（约10分钟）
-   ```bash
-   python evaluate_all.py
-   ```
-
-6. **图表生成**（约5分钟）
-   ```bash
-   python plot_all_figures.py
-   ```
-
-### 预期硬件要求
-
-- GPU：NVIDIA RTX 3060或更高（8GB显存）
-- 内存：16GB或更高
-- 存储：20GB可用空间
+- 功耗测量依赖 NVIDIA NVML；若本机不可用，训练摘要中的 power 字段会显示为 N/A。
+- 当前多个实验脚本仍然是研究脚本风格，而不是可复用库接口。
+- outputs 中已有结果文件属于实验产物，不保证与当前代码完全同步。
 
 ### 复现时间
 

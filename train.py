@@ -10,10 +10,10 @@
 import os
 import time
 import random
+import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
 from spikingjelly.activation_based import functional
 from data.dataloader import get_blood_mnist_loaders
@@ -22,6 +22,11 @@ import numpy as np
 import csv
 import warnings
 warnings.filterwarnings('ignore')
+
+try:
+    import pynvml
+except Exception:
+    pynvml = None
 
 # 超参数
 BATCH_SIZE = 64
@@ -37,52 +42,99 @@ GRADIENT_CLIP = 1.0     # 梯度裁剪
 OUTPUT_DIR = 'outputs'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# 种子设置函数
-def set_seed(seed):
-    """设置随机种子，保证可复现性但允许小幅波动"""
+def set_seed(seed, deterministic=False):
+    """设置随机种子；若 deterministic=True 则启用严格可复现设置"""
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
-    # 关键：关闭cudnn.deterministic，允许小幅波动
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = True  # 开启自动调优
-
-def worker_init_fn(worker_id):
-    """为 DataLoader 的每个 worker 设置不同的随机种子"""
-    np.random.seed(np.random.get_state()[1][0] + worker_id)
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    else:
+        # 默认：允许小幅波动以换取性能
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
 
 # 计算参数量
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+
+def reset_model_state(model_name, model):
+    if model_name == 'SNN':
+        functional.reset_net(model)
+    elif model_name == 'DenseSNN' and hasattr(model, 'reset'):
+        model.reset()
+
+
+def measure_efficiency(model, model_name, data_loader, device, max_batches=10):
+    """测量真实推理延迟，并在可用时采样 GPU 功耗。"""
+    latencies_ms = []
+    power_samples_w = []
+    model.eval()
+
+    nvml_handle = None
+    if device.type == 'cuda' and pynvml is not None:
+        try:
+            pynvml.nvmlInit()
+            nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(device.index or 0)
+        except Exception:
+            nvml_handle = None
+
+    try:
+        with torch.no_grad():
+            for batch_idx, (data, _) in enumerate(data_loader):
+                if batch_idx >= max_batches:
+                    break
+
+                data = data.to(device, non_blocking=True)
+                reset_model_state(model_name, model)
+
+                if device.type == 'cuda':
+                    torch.cuda.synchronize(device)
+                start_time = time.perf_counter()
+                _ = model(data)
+                if device.type == 'cuda':
+                    torch.cuda.synchronize(device)
+                elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                latencies_ms.append(elapsed_ms / data.size(0))
+
+                if nvml_handle is not None:
+                    try:
+                        power_samples_w.append(pynvml.nvmlDeviceGetPowerUsage(nvml_handle) / 1000.0)
+                    except Exception:
+                        pass
+    finally:
+        if nvml_handle is not None:
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
+
+    avg_latency_ms = float(np.mean(latencies_ms)) if latencies_ms else None
+    avg_power_w = float(np.mean(power_samples_w)) if power_samples_w else None
+    return avg_power_w, avg_latency_ms
+
+
+def format_summary_metric(mean_value, std_value, unit=''):
+    if mean_value is None or std_value is None:
+        return 'N/A'
+    suffix = unit if unit else ''
+    return f"{mean_value:.2f} ± {std_value:.2f}{suffix}"
+
 # 训练一个模型
-def train_model(model_name, seed):
+def train_model(model_name, seed, deterministic=False):
     # 设置随机种子
-    set_seed(seed)
+    set_seed(seed, deterministic=deterministic)
     
     # 加载数据
     train_loader, _, test_loader, _ = get_blood_mnist_loaders(
         batch_size=BATCH_SIZE, 
-        mode='snn' if model_name in ['SNN', 'DenseSNN'] else 'ann'
-    )
-    
-    # 手动打乱训练数据顺序，确保每次实验数据顺序不同
-    from torch.utils.data import Subset, DataLoader
-    train_dataset = train_loader.dataset
-    train_indices = np.arange(len(train_dataset))
-    np.random.seed(seed)
-    np.random.shuffle(train_indices)
-    
-    # 重新创建训练 DataLoader
-    train_loader = DataLoader(
-        Subset(train_dataset, train_indices),
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=0,
-        pin_memory=True,
-        drop_last=True
+        mode='snn' if model_name in ['SNN', 'DenseSNN'] else 'ann',
+        seed=seed,
     )
     
     # 初始化模型
@@ -133,10 +185,7 @@ def train_model(model_name, seed):
             # 混合精度前向传播
             if torch.cuda.is_available() and scaler is not None:
                 with autocast():
-                    if model_name == 'SNN':
-                        functional.reset_net(model)
-                    if model_name == 'DenseSNN' and hasattr(model, 'reset'):
-                        model.reset()
+                    reset_model_state(model_name, model)
                     outputs = model(data)
                     
                     loss = criterion(outputs, targets) / ACCUMULATION_STEPS
@@ -156,10 +205,7 @@ def train_model(model_name, seed):
                     optimizer.zero_grad()
             else:
                 # CPU 模式
-                if model_name == 'SNN':
-                    functional.reset_net(model)
-                if model_name == 'DenseSNN' and hasattr(model, 'reset'):
-                    model.reset()
+                reset_model_state(model_name, model)
                 outputs = model(data)
                 
                 loss = criterion(outputs, targets) / ACCUMULATION_STEPS
@@ -189,10 +235,7 @@ def train_model(model_name, seed):
             for data, targets in test_loader:
                 data, targets = data.to(device, non_blocking=True), targets.to(device, non_blocking=True)
                 
-                if model_name == 'SNN':
-                    functional.reset_net(model)
-                if model_name == 'DenseSNN' and hasattr(model, 'reset'):
-                    model.reset()
+                reset_model_state(model_name, model)
                 outputs = model(data)
                 
                 loss = criterion(outputs, targets)
@@ -221,15 +264,13 @@ def train_model(model_name, seed):
               f"Best Acc {best_acc:.2f}%, LR {lr:.6f}")
     
     training_time = time.time() - start_time
-    
-    # 这里简化处理，实际功耗和延迟需要专门的测量工具
-    power = np.random.uniform(0.5, 1.5)  # 模拟功耗
-    latency = np.random.uniform(10, 50)   # 模拟延迟
+
+    power, latency = measure_efficiency(model, model_name, test_loader, device)
     
     return best_acc, training_time, power, latency, params
 
 # 主函数
-def main(start_from=None):
+def main(start_from=None, deterministic=False):
     all_models = ['SNN', 'DenseSNN', 'ANN']
     
     # 如果指定了 start_from，从指定模型开始
@@ -263,8 +304,8 @@ def main(start_from=None):
         for i, seed in enumerate(seeds):
             print(f"\n--- 第 {i+1} 次重复实验 (seed={seed}) ---")
             # 每次实验前重新设置种子
-            set_seed(seed)
-            acc, train_time, power, latency, params = train_model(model, seed)
+            set_seed(seed, deterministic=deterministic)
+            acc, train_time, power, latency, params = train_model(model, seed, deterministic=deterministic)
             results[model]['test_acc'].append(acc)
             results[model]['training_time'].append(train_time)
             results[model]['power'].append(power)
@@ -279,17 +320,19 @@ def main(start_from=None):
         acc_std = np.std(results[model]['test_acc'])
         time_mean = np.mean(results[model]['training_time'])
         time_std = np.std(results[model]['training_time'])
-        power_mean = np.mean(results[model]['power'])
-        power_std = np.std(results[model]['power'])
-        latency_mean = np.mean(results[model]['latency'])
-        latency_std = np.std(results[model]['latency'])
+        valid_power = [value for value in results[model]['power'] if value is not None]
+        valid_latency = [value for value in results[model]['latency'] if value is not None]
+        power_mean = float(np.mean(valid_power)) if valid_power else None
+        power_std = float(np.std(valid_power)) if valid_power else None
+        latency_mean = float(np.mean(valid_latency)) if valid_latency else None
+        latency_std = float(np.std(valid_latency)) if valid_latency else None
         
         summary.append({
             'model': model,
-            'test_acc': f"{acc_mean:.2f} ± {acc_std:.2f}",
-            'training_time': f"{time_mean:.2f} ± {time_std:.2f}",
-            'power': f"{power_mean:.2f} ± {power_std:.2f}",
-            'latency': f"{latency_mean:.2f} ± {latency_std:.2f}",
+            'test_acc': format_summary_metric(acc_mean, acc_std),
+            'training_time': format_summary_metric(time_mean, time_std, 's'),
+            'power': format_summary_metric(power_mean, power_std, 'W'),
+            'latency': format_summary_metric(latency_mean, latency_std, 'ms/sample'),
             'params': f"{results[model]['params']} ({results[model]['params']/1e6:.3f}M)"
         })
     
@@ -318,5 +361,8 @@ if __name__ == '__main__':
     import sys
     # 支持命令行参数指定从哪个模型开始训练
     # 用法: python train.py [SNN|DenseSNN|ANN]
-    start_from = sys.argv[1] if len(sys.argv) > 1 else None
-    main(start_from)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('start_from', nargs='?', default=None, choices=['SNN', 'DenseSNN', 'ANN'], help='从哪个模型开始训练')
+    parser.add_argument('--deterministic', action='store_true', help='启用严格可复现的 cudnn 设置')
+    args = parser.parse_args()
+    main(args.start_from, deterministic=args.deterministic)

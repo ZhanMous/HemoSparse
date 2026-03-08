@@ -2,35 +2,35 @@
 # Python >= 3.9
 
 # 基础框架
-torch>=2.1.0
-torchvision>=0.16.0
-torchaudio>=2.1.0
+torch==2.1.0
+torchvision==0.16.0
+torchaudio==2.1.0
 
-# SpikingJelly 脉冲神经网络框架
-spikingjelly>=0.0.0.0.14
+# SpikingJelly 脉冲神经网络框架（指定已发布版本）
+spikingjelly==0.0.14
 
 # 科学计算
-numpy>=1.21.0
-pandas>=1.4.0
-scipy>=1.7.0
-scikit-learn>=1.1.0
+numpy==1.24.2
+pandas==2.0.3
+scipy==1.10.1
+scikit-learn==1.3.2
 
 # 可视化
-matplotlib>=3.5.0
-seaborn>=0.11.0
-plotly>=5.0.0
-kaleido>=0.2.1
-tensorboard
+matplotlib==3.7.1
+seaborn==0.12.2
+plotly==5.14.1
+kaleido==0.2.1
+tensorboard==2.12.0
 
 # 医疗数据集
-medmnist>=2.2.0
+medmnist==3.0.0
 
 # 隐私工具
-opacus>=1.3.0
+opacus==1.3.1
 
 # GPU监控
-nvidia-ml-py3>=7.352.0
+nvidia-ml-py3==7.352.0
 
 # 其他工具
-tqdm>=4.62.0
-PyYAML>=6.0
+tqdm==4.64.1
+PyYAML==6.0

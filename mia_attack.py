@@ -21,6 +21,26 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, precision_score, recall_score
 import csv
 
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+
+def reset_model_state(model_name, model):
+    if model_name == 'SNN':
+        functional.reset_net(model)
+    elif model_name == 'DenseSNN' and hasattr(model, 'reset'):
+        model.reset()
+
+
+def get_loaders_for_model(model_name, seed=None):
+    mode = 'snn' if model_name in ['SNN', 'DenseSNN'] else 'ann'
+    return get_blood_mnist_loaders(batch_size=BATCH_SIZE, mode=mode, seed=seed)
+
 # 统计检验函数
 def t_test(data1, data2):
     import scipy.stats as stats
@@ -56,11 +76,10 @@ def compute_entropy(p):
 # 训练影子模型
 def train_shadow_model(model_name, shadow_id, seed):
     # 设置随机种子
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    set_seed(seed)
     
     # 加载数据
-    train_loader, val_loader, test_loader, info = get_blood_mnist_loaders(batch_size=BATCH_SIZE)
+    train_loader, val_loader, test_loader, info = get_loaders_for_model(model_name, seed=seed)
     
     # 分割训练数据为成员和非成员
     train_dataset = train_loader.dataset
@@ -101,11 +120,8 @@ def train_shadow_model(model_name, shadow_id, seed):
             
             optimizer.zero_grad()
             
-            if model_name in ['SNN', 'DenseSNN']:
-                functional.reset_net(model)
-                outputs = model(data)
-            else:
-                outputs = model(data)
+            reset_model_state(model_name, model)
+            outputs = model(data)
             
             loss = criterion(outputs, targets)
             loss.backward()
@@ -124,11 +140,8 @@ def extract_features(model, model_name, data_loader):
         for data, targets in data_loader:
             data, targets = data.to(device), targets.to(device)
             
-            if model_name in ['SNN', 'DenseSNN']:
-                functional.reset_net(model)
-                outputs = model(data)
-            else:
-                outputs = model(data)
+            reset_model_state(model_name, model)
+            outputs = model(data)
             
             # 计算 softmax 概率
             probs = nn.functional.softmax(outputs, dim=1)
@@ -174,7 +187,7 @@ def run_mia_attack(model_name):
     
     # 训练攻击模型
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
-    attack_model = LogisticRegression()
+    attack_model = LogisticRegression(max_iter=1000)
     attack_model.fit(X_train, y_train)
     
     # 测试攻击模型
@@ -208,7 +221,7 @@ def train_overfit_ann():
     print("\n=== 训练过拟合 ANN ===")
     
     # 加载数据
-    train_loader, val_loader, test_loader, info = get_blood_mnist_loaders(batch_size=BATCH_SIZE)
+    train_loader, val_loader, test_loader, info = get_loaders_for_model('ANN')
     
     # 初始化模型
     model = ANN()
@@ -286,7 +299,7 @@ def main():
         overfit_ann = train_overfit_ann()
         
         # 提取过拟合 ANN 的特征用于 MIA 攻击
-        train_loader, test_loader = get_blood_mnist_loaders(batch_size=BATCH_SIZE)
+        train_loader, _, test_loader, _ = get_loaders_for_model('ANN', seed=repeat)
         
         # 分割数据
         train_dataset = train_loader.dataset
@@ -309,7 +322,7 @@ def main():
         
         # 训练攻击模型
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
-        attack_model = LogisticRegression()
+        attack_model = LogisticRegression(max_iter=1000)
         attack_model.fit(X_train, y_train)
         
         # 测试攻击模型

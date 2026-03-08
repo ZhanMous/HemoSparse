@@ -1,3 +1,5 @@
+import os
+import csv
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -5,9 +7,100 @@ plt.rcParams['font.family'] = ['DejaVu Sans', 'sans-serif']
 plt.rcParams['font.size'] = 14
 plt.rcParams['axes.unicode_minus'] = False
 
+OUTPUT_DIR = 'outputs'
+
+def _parse_maybe_percent(val):
+    try:
+        if val is None:
+            return None
+        s = str(val).strip()
+        # handle formats like "0.500 ± 0.015" or "50.0%" or "50.0"
+        if '±' in s:
+            s = s.split('±')[0].strip()
+        s = s.strip('%')
+        return float(s)
+    except Exception:
+        return None
+
+def read_mia_results():
+    path = os.path.join(OUTPUT_DIR, 'mia_results.csv')
+    if not os.path.exists(path):
+        return {}
+    out = {}
+    try:
+        with open(path, 'r') as f:
+            reader = csv.reader(f)
+            headers = next(reader)
+            for row in reader:
+                model = row[0]
+                val = _parse_maybe_percent(row[1])
+                out[model] = val
+    except Exception:
+        return {}
+    return out
+
+def read_training_summary():
+    path = os.path.join(OUTPUT_DIR, 'training_summary.csv')
+    if not os.path.exists(path):
+        return {}
+    out = {}
+    try:
+        with open(path, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                model = row.get('Model') or row.get('model')
+                if not model:
+                    continue
+                test_acc = None
+                if 'Test Accuracy (%)' in row:
+                    test_acc = _parse_maybe_percent(row['Test Accuracy (%)'])
+                elif 'test_acc' in row:
+                    test_acc = _parse_maybe_percent(row['test_acc'])
+                out[model] = test_acc
+    except Exception:
+        return {}
+    return out
+
+def read_power_results():
+    path = os.path.join(OUTPUT_DIR, 'power_results.csv')
+    if not os.path.exists(path):
+        return {}
+    out = {}
+    try:
+        with open(path, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                model = row.get('Model') or row.get('model')
+                if not model:
+                    continue
+                val = None
+                # try common columns
+                for key in ['Energy per Sample (mJ)', 'Energy per Sample', 'energy']:
+                    if key in row:
+                        val = _parse_maybe_percent(row[key])
+                        break
+                out[model] = val
+    except Exception:
+        return {}
+    return out
+
 def create_privacy_comparison():
+    mia = read_mia_results()
+    # map labels to model keys used in CSVs
     categories = ['Traditional AI', 'HemoSparse']
-    attack_rates = [62.8, 50.0]
+    ann_key = 'ANN'
+    snn_key = 'SNN'
+    ann_mia = mia.get(ann_key)
+    snn_mia = mia.get(snn_key)
+    if ann_mia is None or snn_mia is None:
+        print('警告: mia_results.csv 中缺少 ANN 或 SNN 的 MIA 数据，跳过隐私对比图')
+        return
+    # convert fractions to percentages if needed
+    if ann_mia <= 1.0:
+        ann_mia *= 100.0
+    if snn_mia <= 1.0:
+        snn_mia *= 100.0
+    attack_rates = [ann_mia, snn_mia]
     colors = ['#ff6b6b', '#51cf66']
     
     fig, ax = plt.subplots(figsize=(16, 9), dpi=300)
@@ -42,8 +135,13 @@ def create_privacy_comparison():
     print('✅ 隐私保护对比.png generated successfully!')
 
 def create_accuracy_comparison():
-    categories = ['Traditional AI', 'HemoSparse']
-    accuracies = [95.59, 93.63]
+    training = read_training_summary()
+    ann_acc = training.get('ANN')
+    snn_acc = training.get('SNN')
+    if ann_acc is None or snn_acc is None:
+        print('警告: training_summary.csv 中缺少 ANN 或 SNN 的 test_acc，跳过准确率对比图')
+        return
+    accuracies = [ann_acc, snn_acc]
     colors = ['#74c0fc', '#4dabf7']
     
     fig, ax = plt.subplots(figsize=(16, 9), dpi=300)
@@ -75,8 +173,20 @@ def create_accuracy_comparison():
     print('✅ 诊断准确率对比.png generated successfully!')
 
 def create_computational_efficiency():
+    power = read_power_results()
+    ann_energy = power.get('ANN')
+    snn_energy = power.get('SNN')
+    if ann_energy is None or snn_energy is None:
+        print('警告: power_results.csv 中缺少 ANN 或 SNN 的能量数据，跳过计算量对比图')
+        return
+    # compute relative efficiency: ANN -> 100, HemoSparse -> (SNN_energy/ANN_energy)*100
+    try:
+        ratio = float(snn_energy) / float(ann_energy) * 100.0
+    except Exception:
+        print('警告: 无法计算能量比，跳过计算量对比图')
+        return
     categories = ['Traditional AI', 'HemoSparse']
-    efficiencies = [100, 0.3]
+    efficiencies = [100.0, ratio]
     colors = ['#868e96', '#51cf66']
     
     fig, ax = plt.subplots(figsize=(16, 9), dpi=300)

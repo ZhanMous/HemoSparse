@@ -171,24 +171,67 @@ def train_single_model(model, model_name, seed, train_loader, test_loader, devic
     return best_acc, training_time
 
 # 简化的MIA准确率模拟（基于论文中已有结果的统计分布）
-def simulate_mia_accuracy(model_name):
-    if model_name == 'SNN':
-        return np.random.normal(0.500, 0.015)
-    elif model_name == 'SNN_FixedAlpha':
-        return np.random.normal(0.525, 0.018)
-    elif model_name == 'ANN':
-        return np.random.normal(0.628, 0.021)
-    elif model_name == 'ANN_DP':
-        return np.random.normal(0.502, 0.016)
-    else:
-        return np.random.normal(0.55, 0.02)
+def read_column_values(csv_path, model_name, column):
+    if not os.path.exists(csv_path):
+        return []
+    vals = []
+    try:
+        with open(csv_path, 'r', newline='') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get('model') == model_name and column in row:
+                    try:
+                        vals.append(float(row[column]))
+                    except Exception:
+                        try:
+                            # sometimes values are formatted like "12.34 ± 0.56"
+                            vals.append(float(row[column].split()[0]))
+                        except Exception:
+                            continue
+    except Exception:
+        return []
+    return vals
 
-# 简化的延迟模拟
-def simulate_latency(model_name):
-    if model_name.startswith('ANN'):
-        return np.random.normal(0.508, 0.021)
-    else:
-        return np.random.normal(4.724, 0.123)
+
+def get_mia_from_outputs(model_name):
+    candidates = [
+        os.path.join(OUTPUT_DIR, 'mia_results.csv'),
+        os.path.join(OUTPUT_DIR, 'p1_plif_ablation.csv'),
+        os.path.join(OUTPUT_DIR, 'p1_dp_sgd_comparison.csv'),
+        os.path.join(OUTPUT_DIR, 'ablation_results.csv')
+    ]
+    for p in candidates:
+        vals = read_column_values(p, model_name, 'mia_acc')
+        if vals:
+            return float(np.mean(vals))
+    return None
+
+
+def get_latency_from_outputs(model_name):
+    candidates = [
+        os.path.join(OUTPUT_DIR, 'p1_dp_sgd_comparison.csv'),
+        os.path.join(OUTPUT_DIR, 'power_results.csv'),
+        os.path.join(OUTPUT_DIR, 'theoretical_flops.csv')
+    ]
+    for p in candidates:
+        vals = read_column_values(p, model_name, 'latency')
+        if vals:
+            return float(np.mean(vals))
+    return None
+
+
+def get_test_acc_from_outputs(model_name):
+    candidates = [
+        os.path.join(OUTPUT_DIR, 'p1_plif_ablation.csv'),
+        os.path.join(OUTPUT_DIR, 'p1_dp_sgd_comparison.csv'),
+        os.path.join(OUTPUT_DIR, 'training_summary.csv'),
+        os.path.join(OUTPUT_DIR, 'ablation_results.csv')
+    ]
+    for p in candidates:
+        vals = read_column_values(p, model_name, 'test_acc')
+        if vals:
+            return float(np.mean(vals))
+    return None
 
 # 主实验函数
 def run_p1_ablation_experiments():
@@ -239,8 +282,11 @@ def run_p1_ablation_experiments():
             model_snn, 'SNN', seed, train_loader, test_loader, device
         )
         sparsity_snn = calculate_sparsity(model_snn, test_loader, device)
-        mia_snn = simulate_mia_accuracy('SNN')
-        
+        mia_snn = get_mia_from_outputs('SNN')
+        if mia_snn is None:
+            print("警告: 未在 outputs 中找到 SNN 的 MIA 结果，记录为 NaN")
+            mia_snn = np.nan
+
         plif_results['SNN']['test_acc'].append(acc_snn)
         plif_results['SNN']['sparsity'].append(sparsity_snn)
         plif_results['SNN']['mia_acc'].append(mia_snn)
@@ -252,27 +298,34 @@ def run_p1_ablation_experiments():
             model_fixed, 'SNN_FixedAlpha', seed, train_loader, test_loader, device
         )
         sparsity_fixed = 0.985  # 固定α模型的稀疏度略低
-        mia_fixed = simulate_mia_accuracy('SNN_FixedAlpha')
-        
+        mia_fixed = get_mia_from_outputs('SNN_FixedAlpha')
+        if mia_fixed is None:
+            print("警告: 未在 outputs 中找到 SNN_FixedAlpha 的 MIA 结果，记录为 NaN")
+            mia_fixed = np.nan
+
         plif_results['SNN_FixedAlpha']['test_acc'].append(acc_fixed)
         plif_results['SNN_FixedAlpha']['sparsity'].append(sparsity_fixed)
         plif_results['SNN_FixedAlpha']['mia_acc'].append(mia_fixed)
     
     # 计算PLIF消融实验统计结果
     plif_summary = []
+    def format_mean_std(vals, mean_fmt='.2f', std_fmt='.2f'):
+        if len(vals) == 0 or np.all(np.isnan(vals)):
+            return 'N/A'
+        m = float(np.nanmean(vals))
+        s = float(np.nanstd(vals))
+        return f"{m:{mean_fmt}} ± {s:{std_fmt}}"
+
     for model_name in ['SNN', 'SNN_FixedAlpha']:
-        acc_mean = np.mean(plif_results[model_name]['test_acc'])
-        acc_std = np.std(plif_results[model_name]['test_acc'])
-        sparsity_mean = np.mean(plif_results[model_name]['sparsity'])
-        sparsity_std = np.std(plif_results[model_name]['sparsity'])
-        mia_mean = np.mean(plif_results[model_name]['mia_acc'])
-        mia_std = np.std(plif_results[model_name]['mia_acc'])
-        
+        acc_mean_str = format_mean_std(plif_results[model_name]['test_acc'], '.2f', '.2f')
+        sparsity_str = format_mean_std(plif_results[model_name]['sparsity'], '.3f', '.3f')
+        mia_str = format_mean_std(plif_results[model_name]['mia_acc'], '.3f', '.3f')
+
         plif_summary.append({
             'model': model_name,
-            'test_acc': f"{acc_mean:.2f} ± {acc_std:.2f}",
-            'sparsity': f"{sparsity_mean:.3f} ± {sparsity_std:.3f}",
-            'mia_acc': f"{mia_mean:.3f} ± {mia_std:.3f}"
+            'test_acc': acc_mean_str,
+            'sparsity': sparsity_str,
+            'mia_acc': mia_str
         })
     
     # 保存PLIF消融实验结果
@@ -323,9 +376,15 @@ def run_p1_ablation_experiments():
         acc_ann, time_ann = train_single_model(
             model_ann, 'ANN', seed, train_loader, test_loader, device
         )
-        mia_ann = simulate_mia_accuracy('ANN')
-        latency_ann = simulate_latency('ANN')
-        
+        mia_ann = get_mia_from_outputs('ANN')
+        if mia_ann is None:
+            print("警告: 未在 outputs 中找到 ANN 的 MIA 结果，记录为 NaN")
+            mia_ann = np.nan
+        latency_ann = get_latency_from_outputs('ANN')
+        if latency_ann is None:
+            print("警告: 未在 outputs 中找到 ANN 的延迟结果，记录为 NaN")
+            latency_ann = np.nan
+
         dp_results['ANN']['test_acc'].append(acc_ann)
         dp_results['ANN']['mia_acc'].append(mia_ann)
         dp_results['ANN']['latency'].append(latency_ann)
@@ -334,35 +393,50 @@ def run_p1_ablation_experiments():
         print(f"\n训练 ANN + DP-SGD...")
         model_ann_dp = ANN().to(device)
         # 模拟DP-SGD的准确率损失
-        acc_dp = acc_ann * 0.91  # 约9%的准确率损失
-        mia_dp = simulate_mia_accuracy('ANN_DP')
-        latency_dp = simulate_latency('ANN') * 1.15  # DP有额外计算开销
-        
+        acc_dp = acc_ann * 0.91  # 约9%的准确率损失（占位，建议用真实实验结果替换）
+        mia_dp = get_mia_from_outputs('ANN_DP')
+        if mia_dp is None:
+            print("警告: 未在 outputs 中找到 ANN_DP 的 MIA 结果，记录为 NaN")
+            mia_dp = np.nan
+        latency_dp = get_latency_from_outputs('ANN')
+        if latency_dp is None:
+            latency_dp = np.nan
+        else:
+            latency_dp = latency_dp * 1.15  # DP 有额外计算开销
+
         dp_results['ANN_DP']['test_acc'].append(acc_dp)
         dp_results['ANN_DP']['mia_acc'].append(mia_dp)
         dp_results['ANN_DP']['latency'].append(latency_dp)
         
         # SNN（本文方法）
-        print(f"\n使用已训练的 SNN 结果...")
-        dp_results['SNN']['test_acc'].append(93.63 + np.random.normal(0, 0.28))
-        dp_results['SNN']['mia_acc'].append(simulate_mia_accuracy('SNN'))
-        dp_results['SNN']['latency'].append(simulate_latency('SNN'))
+        print(f"\n使用已训练的 SNN 结果 (从 outputs 读取)...")
+        snn_acc = get_test_acc_from_outputs('SNN')
+        if snn_acc is None:
+            print("警告: 未在 outputs 中找到 SNN 的 test_acc，记录为 NaN")
+            snn_acc = np.nan
+        snn_mia = get_mia_from_outputs('SNN')
+        if snn_mia is None:
+            snn_mia = np.nan
+        snn_latency = get_latency_from_outputs('SNN')
+        if snn_latency is None:
+            snn_latency = np.nan
+
+        dp_results['SNN']['test_acc'].append(snn_acc)
+        dp_results['SNN']['mia_acc'].append(snn_mia)
+        dp_results['SNN']['latency'].append(snn_latency)
     
     # 计算DP-SGD对比实验统计结果
     dp_summary = []
     for model_name in ['ANN', 'ANN_DP', 'SNN']:
-        acc_mean = np.mean(dp_results[model_name]['test_acc'])
-        acc_std = np.std(dp_results[model_name]['test_acc'])
-        mia_mean = np.mean(dp_results[model_name]['mia_acc'])
-        mia_std = np.std(dp_results[model_name]['mia_acc'])
-        latency_mean = np.mean(dp_results[model_name]['latency'])
-        latency_std = np.std(dp_results[model_name]['latency'])
-        
+        acc_str = format_mean_std(dp_results[model_name]['test_acc'], '.2f', '.2f')
+        mia_str = format_mean_std(dp_results[model_name]['mia_acc'], '.3f', '.3f')
+        latency_str = format_mean_std(dp_results[model_name]['latency'], '.3f', '.3f')
+
         dp_summary.append({
             'model': model_name,
-            'test_acc': f"{acc_mean:.2f} ± {acc_std:.2f}",
-            'mia_acc': f"{mia_mean:.3f} ± {mia_std:.3f}",
-            'latency': f"{latency_mean:.3f} ± {latency_std:.3f}"
+            'test_acc': acc_str,
+            'mia_acc': mia_str,
+            'latency': latency_str
         })
     
     # 保存DP-SGD对比实验结果
