@@ -11,12 +11,13 @@ import os
 import time
 import random
 import argparse
+import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.cuda.amp import autocast, GradScaler
 from spikingjelly.activation_based import functional
-from data.dataloader import get_blood_mnist_loaders
+from data.dataloader import get_medmnist_loaders, resolve_dataset_info
 from models import SNN, DenseSNN, ANN
 import numpy as np
 import csv
@@ -41,6 +42,9 @@ GRADIENT_CLIP = 1.0     # 梯度裁剪
 # 保存目录
 OUTPUT_DIR = 'outputs'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+DEFAULT_MODELS = ['SNN', 'DenseSNN', 'ANN']
+DEFAULT_SEEDS = [42, 43, 44, 45, 46]
 
 def set_seed(seed, deterministic=False):
     """设置随机种子；若 deterministic=True 则启用严格可复现设置"""
@@ -68,6 +72,41 @@ def reset_model_state(model_name, model):
         functional.reset_net(model)
     elif model_name == 'DenseSNN' and hasattr(model, 'reset'):
         model.reset()
+
+
+def build_model(model_name, num_classes, in_channels, T, v_threshold):
+    if model_name == 'SNN':
+        return SNN(in_channels=in_channels, num_classes=num_classes, T=T, v_threshold=v_threshold)
+    if model_name == 'DenseSNN':
+        return DenseSNN(in_channels=in_channels, num_classes=num_classes, T=T, v_threshold=v_threshold)
+    if model_name == 'ANN':
+        return ANN(in_channels=in_channels, num_classes=num_classes)
+    raise ValueError(f"Unknown model: {model_name}")
+
+
+def evaluate_model(model, model_name, data_loader, criterion, device):
+    model.eval()
+    total_loss = 0.0
+    total_correct = 0
+    total_samples = 0
+
+    with torch.no_grad():
+        for data, targets in data_loader:
+            data = data.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
+
+            reset_model_state(model_name, model)
+            outputs = model(data)
+
+            loss = criterion(outputs, targets)
+            total_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total_samples += targets.size(0)
+            total_correct += predicted.eq(targets).sum().item()
+
+    avg_loss = total_loss / max(len(data_loader), 1)
+    avg_acc = 100.0 * total_correct / max(total_samples, 1)
+    return avg_loss, avg_acc
 
 
 def measure_efficiency(model, model_name, data_loader, device, max_batches=10):
@@ -126,26 +165,42 @@ def format_summary_metric(mean_value, std_value, unit=''):
     return f"{mean_value:.2f} ± {std_value:.2f}{suffix}"
 
 # 训练一个模型
-def train_model(model_name, seed, deterministic=False):
+def train_model(
+    model_name,
+    seed,
+    dataset_flag='bloodmnist',
+    deterministic=False,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    encoding='direct',
+    augment=True,
+    T_value=T,
+    output_prefix=None,
+):
     # 设置随机种子
     set_seed(seed, deterministic=deterministic)
+
+    dataset_flag, _, _, num_classes, in_channels = resolve_dataset_info(dataset_flag)
     
     # 加载数据
-    train_loader, _, test_loader, _ = get_blood_mnist_loaders(
-        batch_size=BATCH_SIZE, 
+    train_loader, val_loader, test_loader, _ = get_medmnist_loaders(
+        dataset_flag=dataset_flag,
+        batch_size=batch_size,
         mode='snn' if model_name in ['SNN', 'DenseSNN'] else 'ann',
+        T=T_value,
+        encoding=encoding,
+        augment=augment,
         seed=seed,
     )
     
     # 初始化模型
-    if model_name == 'SNN':
-        model = SNN(T=T, v_threshold=V_THRESHOLD)
-    elif model_name == 'DenseSNN':
-        model = DenseSNN(T=T, v_threshold=V_THRESHOLD)
-    elif model_name == 'ANN':
-        model = ANN()
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
+    model = build_model(
+        model_name,
+        num_classes=num_classes,
+        in_channels=in_channels,
+        T=T_value,
+        v_threshold=V_THRESHOLD,
+    )
     
     # 计算参数量
     params = count_parameters(model)
@@ -166,13 +221,15 @@ def train_model(model_name, seed, deterministic=False):
     scaler = GradScaler() if torch.cuda.is_available() else None
     
     # 学习率调度器
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     
     # 训练记录
     start_time = time.time()
-    best_acc = 0.0
+    best_val_acc = 0.0
+    best_epoch = 0
+    best_state_dict = copy.deepcopy(model.state_dict())
     
-    for epoch in range(EPOCHS):
+    for epoch in range(epochs):
         model.train()
         train_loss = 0.0
         correct = 0
@@ -225,144 +282,207 @@ def train_model(model_name, seed, deterministic=False):
         # 更新学习率
         scheduler.step()
         
-        # 测试
-        model.eval()
-        test_loss = 0.0
-        test_correct = 0
-        test_total = 0
-        
-        with torch.no_grad():
-            for data, targets in test_loader:
-                data, targets = data.to(device, non_blocking=True), targets.to(device, non_blocking=True)
-                
-                reset_model_state(model_name, model)
-                outputs = model(data)
-                
-                loss = criterion(outputs, targets)
-                test_loss += loss.item()
-                _, predicted = outputs.max(1)
-                test_total += targets.size(0)
-                test_correct += predicted.eq(targets).sum().item()
-        
         train_acc = 100. * correct / total
-        test_acc = 100. * test_correct / test_total
-        
-        if test_acc > best_acc:
-            best_acc = test_acc
-            # 保存模型
-            model_path = os.path.join(OUTPUT_DIR, f'{model_name}_T{T}_seed{seed}.pth')
+        val_loss, val_acc = evaluate_model(model, model_name, val_loader, criterion, device)
+
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_epoch = epoch + 1
+            best_state_dict = copy.deepcopy(model.state_dict())
+
+            checkpoint_name = output_prefix or dataset_flag
+            model_path = os.path.join(OUTPUT_DIR, f'{checkpoint_name}_{model_name}_T{T_value}_seed{seed}.pth')
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'test_acc': test_acc,
+                'val_acc': val_acc,
+                'dataset': dataset_flag,
+                'encoding': encoding,
             }, model_path)
         
         lr = optimizer.param_groups[0]['lr']
-        print(f"{model_name} Seed {seed} Epoch {epoch+1}/{EPOCHS}: "
-              f"Train Acc {train_acc:.2f}%, Test Acc {test_acc:.2f}%, "
-              f"Best Acc {best_acc:.2f}%, LR {lr:.6f}")
+        print(
+            f"{dataset_flag} | {model_name} | seed={seed} | epoch {epoch+1}/{epochs}: "
+            f"Train Loss {train_loss / max(len(train_loader), 1):.4f}, Train Acc {train_acc:.2f}%, "
+            f"Val Loss {val_loss:.4f}, Val Acc {val_acc:.2f}%, Best Val {best_val_acc:.2f}% (epoch {best_epoch}), "
+            f"LR {lr:.6f}"
+        )
     
     training_time = time.time() - start_time
 
+    model.load_state_dict(best_state_dict)
+    _, test_acc = evaluate_model(model, model_name, test_loader, criterion, device)
+
     power, latency = measure_efficiency(model, model_name, test_loader, device)
     
-    return best_acc, training_time, power, latency, params
+    return {
+        'dataset': dataset_flag,
+        'model': model_name,
+        'seed': seed,
+        'encoding': encoding,
+        'augment': augment,
+        'T': T_value,
+        'epochs': epochs,
+        'best_epoch': best_epoch,
+        'val_acc': best_val_acc,
+        'test_acc': test_acc,
+        'training_time': training_time,
+        'power': power,
+        'latency': latency,
+        'params': params,
+    }
 
-# 主函数
-def main(start_from=None, deterministic=False):
-    all_models = ['SNN', 'DenseSNN', 'ANN']
-    
-    # 如果指定了 start_from，从指定模型开始
-    if start_from and start_from in all_models:
-        start_idx = all_models.index(start_from)
-        models = all_models[start_idx:]
-        print(f"\n=== 从 {start_from} 开始训练 ===")
-    else:
-        models = all_models
-    
-    repeats = 5
-    # 5轮实验用不同种子，保证可复现但有小幅波动
-    seeds = [42, 43, 44, 45, 46]
-    
-    # 结果存储
-    results = {}
-    for model in models:
-        results[model] = {
-            'test_acc': [],
-            'training_time': [],
-            'power': [],
-            'latency': [],
-            'params': None
-        }
-    
-    # 运行实验
-    for model in models:
-        print(f"\n{'='*60}")
-        print(f"  训练 {model}")
-        print(f"{'='*60}")
-        for i, seed in enumerate(seeds):
-            print(f"\n--- 第 {i+1} 次重复实验 (seed={seed}) ---")
-            # 每次实验前重新设置种子
-            set_seed(seed, deterministic=deterministic)
-            acc, train_time, power, latency, params = train_model(model, seed, deterministic=deterministic)
-            results[model]['test_acc'].append(acc)
-            results[model]['training_time'].append(train_time)
-            results[model]['power'].append(power)
-            results[model]['latency'].append(latency)
-            if results[model]['params'] is None:
-                results[model]['params'] = params
-    
-    # 计算均值和标准差
+
+def summarize_results(results, output_prefix):
     summary = []
-    for model in models:
-        acc_mean = np.mean(results[model]['test_acc'])
-        acc_std = np.std(results[model]['test_acc'])
-        time_mean = np.mean(results[model]['training_time'])
-        time_std = np.std(results[model]['training_time'])
-        valid_power = [value for value in results[model]['power'] if value is not None]
-        valid_latency = [value for value in results[model]['latency'] if value is not None]
-        power_mean = float(np.mean(valid_power)) if valid_power else None
-        power_std = float(np.std(valid_power)) if valid_power else None
-        latency_mean = float(np.mean(valid_latency)) if valid_latency else None
-        latency_std = float(np.std(valid_latency)) if valid_latency else None
-        
+    for model, rows in results.items():
+        acc_values = [row['test_acc'] for row in rows]
+        val_values = [row['val_acc'] for row in rows]
+        time_values = [row['training_time'] for row in rows]
+        power_values = [row['power'] for row in rows if row['power'] is not None]
+        latency_values = [row['latency'] for row in rows if row['latency'] is not None]
+        params = rows[0]['params'] if rows else 0
+
         summary.append({
+            'dataset': rows[0]['dataset'],
             'model': model,
-            'test_acc': format_summary_metric(acc_mean, acc_std),
-            'training_time': format_summary_metric(time_mean, time_std, 's'),
-            'power': format_summary_metric(power_mean, power_std, 'W'),
-            'latency': format_summary_metric(latency_mean, latency_std, 'ms/sample'),
-            'params': f"{results[model]['params']} ({results[model]['params']/1e6:.3f}M)"
+            'encoding': rows[0]['encoding'],
+            'augment': rows[0]['augment'],
+            'T': rows[0]['T'],
+            'epochs': rows[0]['epochs'],
+            'repeats': len(rows),
+            'val_acc': format_summary_metric(float(np.mean(val_values)), float(np.std(val_values))),
+            'test_acc': format_summary_metric(float(np.mean(acc_values)), float(np.std(acc_values))),
+            'training_time': format_summary_metric(float(np.mean(time_values)), float(np.std(time_values)), 's'),
+            'power': format_summary_metric(float(np.mean(power_values)), float(np.std(power_values)), 'W') if power_values else 'N/A',
+            'latency': format_summary_metric(float(np.mean(latency_values)), float(np.std(latency_values)), 'ms/sample') if latency_values else 'N/A',
+            'params': f"{params} ({params/1e6:.3f}M)",
+            'output_prefix': output_prefix,
         })
-    
-    # 保存结果
-    csv_path = os.path.join(OUTPUT_DIR, 'training_summary.csv')
-    with open(csv_path, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['model', 'test_acc', 'training_time', 'power', 'latency', 'params'])
+
+    return summary
+
+
+def build_seed_list(repeats, seeds=None):
+    if seeds:
+        return [int(seed.strip()) for seed in seeds.split(',') if seed.strip()]
+    if repeats <= len(DEFAULT_SEEDS):
+        return DEFAULT_SEEDS[:repeats]
+    return list(range(42, 42 + repeats))
+
+
+def run_experiments(
+    models=None,
+    dataset_flag='bloodmnist',
+    deterministic=False,
+    repeats=5,
+    seeds=None,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    encoding='direct',
+    augment=True,
+    T_value=T,
+    output_prefix=None,
+):
+    models = models or DEFAULT_MODELS
+    seed_list = build_seed_list(repeats, seeds=seeds)
+    output_prefix = output_prefix or dataset_flag
+
+    results = {model: [] for model in models}
+
+    for model in models:
+        print(f"\n{'=' * 60}")
+        print(f"  数据集={dataset_flag} | 训练 {model}")
+        print(f"{'=' * 60}")
+        for index, seed in enumerate(seed_list, start=1):
+            print(f"\n--- 第 {index} 次重复实验 (seed={seed}) ---")
+            result = train_model(
+                model,
+                seed,
+                dataset_flag=dataset_flag,
+                deterministic=deterministic,
+                epochs=epochs,
+                batch_size=batch_size,
+                encoding=encoding,
+                augment=augment,
+                T_value=T_value,
+                output_prefix=output_prefix,
+            )
+            results[model].append(result)
+
+    detailed_rows = [row for rows in results.values() for row in rows]
+    detailed_path = os.path.join(OUTPUT_DIR, f'training_runs_{output_prefix}.csv')
+    with open(detailed_path, 'w', newline='') as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=['dataset', 'model', 'seed', 'encoding', 'augment', 'T', 'epochs', 'best_epoch', 'val_acc', 'test_acc', 'training_time', 'power', 'latency', 'params']
+        )
+        writer.writeheader()
+        writer.writerows(detailed_rows)
+
+    summary = summarize_results(results, output_prefix)
+    summary_path = os.path.join(OUTPUT_DIR, f'training_summary_{output_prefix}.csv')
+    with open(summary_path, 'w', newline='') as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=['dataset', 'model', 'encoding', 'augment', 'T', 'epochs', 'repeats', 'val_acc', 'test_acc', 'training_time', 'power', 'latency', 'params', 'output_prefix']
+        )
         writer.writeheader()
         writer.writerows(summary)
-    
-    print(f"\n{'='*60}")
+
+    print(f"\n{'=' * 60}")
     print("  训练完成")
-    print(f"{'='*60}")
-    print(f"结果已保存到 {csv_path}")
-    
-    # 打印结果
+    print(f"{'=' * 60}")
+    print(f"详细结果: {detailed_path}")
+    print(f"汇总结果: {summary_path}")
+
     for item in summary:
         print(f"\n{item['model']}:")
+        print(f"  验证准确率: {item['val_acc']}%")
         print(f"  测试准确率: {item['test_acc']}%")
-        print(f"  训练时间: {item['training_time']}s")
-        print(f"  功耗: {item['power']}W")
-        print(f"  延迟: {item['latency']}ms")
+        print(f"  训练时间: {item['training_time']}")
+        print(f"  功耗: {item['power']}")
+        print(f"  延迟: {item['latency']}")
         print(f"  参数量: {item['params']}")
 
+    return detailed_path, summary_path
+
+def main(args):
+    models = DEFAULT_MODELS
+    if args.models:
+        models = [name.strip() for name in args.models.split(',') if name.strip()]
+    elif args.start_from:
+        start_idx = DEFAULT_MODELS.index(args.start_from)
+        models = DEFAULT_MODELS[start_idx:]
+
+    run_experiments(
+        models=models,
+        dataset_flag=args.dataset,
+        deterministic=args.deterministic,
+        repeats=args.repeats,
+        seeds=args.seeds,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        encoding=args.encoding,
+        augment=not args.no_augment,
+        T_value=args.timesteps,
+        output_prefix=args.output_prefix,
+    )
+
 if __name__ == '__main__':
-    import sys
-    # 支持命令行参数指定从哪个模型开始训练
-    # 用法: python train.py [SNN|DenseSNN|ANN]
     parser = argparse.ArgumentParser()
     parser.add_argument('start_from', nargs='?', default=None, choices=['SNN', 'DenseSNN', 'ANN'], help='从哪个模型开始训练')
     parser.add_argument('--deterministic', action='store_true', help='启用严格可复现的 cudnn 设置')
+    parser.add_argument('--dataset', default='bloodmnist', help='MedMNIST 数据集标识，例如 bloodmnist 或 pathmnist')
+    parser.add_argument('--models', default=None, help='以逗号分隔的模型列表，例如 SNN,DenseSNN,ANN')
+    parser.add_argument('--epochs', type=int, default=EPOCHS, help='训练轮数')
+    parser.add_argument('--repeats', type=int, default=5, help='重复实验次数')
+    parser.add_argument('--seeds', default=None, help='逗号分隔的种子列表，优先级高于 repeats')
+    parser.add_argument('--batch-size', type=int, default=BATCH_SIZE, help='批次大小')
+    parser.add_argument('--encoding', choices=['direct', 'poisson'], default='direct', help='SNN 输入编码方式')
+    parser.add_argument('--timesteps', type=int, default=T, help='SNN 时间步数')
+    parser.add_argument('--no-augment', action='store_true', help='关闭训练集数据增强')
+    parser.add_argument('--output-prefix', default=None, help='输出文件名前缀')
     args = parser.parse_args()
-    main(args.start_from, deterministic=args.deterministic)
+    main(args)

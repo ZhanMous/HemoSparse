@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-BloodMNIST 数据加载与泊松脉冲编码
+MedMNIST 数据加载与脉冲编码工具。
 - 适配 SpikingJelly 多步模式 [T, N, C, H, W]
-- 现代GPU硬件优化（pin_memory, num_workers, 自适应batch）
-- 轻量级医疗影像增强（水平翻转 + ±5°旋转）
+- 支持 BloodMNIST / PathMNIST 等 MedMNIST 分类任务
+- 为病理图像提供更适合纹理分类的增强策略
 """
 
 import os
@@ -22,6 +22,9 @@ from config import (
     DEFAULT_BATCH_SIZE, NUM_WORKERS, PIN_MEMORY,
     get_adaptive_batch_size
 )
+
+
+PATHOLOGY_DATASETS = {'pathmnist'}
 
 
 def _seed_worker(worker_id):
@@ -105,9 +108,50 @@ class SpikeEncodedDataset(Dataset):
 
 
 # ============================================================
+# 数据集元信息
+# ============================================================
+def resolve_dataset_info(dataset_flag=None):
+    dataset_flag = (dataset_flag or DATA_FLAG).lower()
+    if dataset_flag not in INFO:
+        raise ValueError(f"Unsupported MedMNIST dataset: {dataset_flag}")
+
+    info = INFO[dataset_flag]
+    data_class = getattr(medmnist, info['python_class'])
+    num_classes = len(info['label'])
+    in_channels = int(info.get('n_channels', IN_CHANNELS))
+    return dataset_flag, info, data_class, num_classes, in_channels
+
+
+def build_transforms(dataset_flag, augment=True):
+    if not augment:
+        transform = transforms.Compose([transforms.ToTensor()])
+        return transform, transform
+
+    if dataset_flag in PATHOLOGY_DATASETS:
+        train_transform = transforms.Compose([
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomRotation(degrees=180),
+            transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.1, hue=0.02),
+            transforms.ToTensor(),
+        ])
+    else:
+        train_transform = transforms.Compose([
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomRotation(degrees=5),
+            transforms.ToTensor(),
+        ])
+
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+    ])
+    return train_transform, test_transform
+
+
+# ============================================================
 # 数据加载器（SNN / ANN 双模式）
 # ============================================================
-def get_blood_mnist_loaders(
+def get_medmnist_loaders(
     batch_size=None,
     T=DEFAULT_T,
     mode='snn',
@@ -116,9 +160,11 @@ def get_blood_mnist_loaders(
     seed=None,
     num_workers=None,
     pin_memory=None,
+    dataset_flag=None,
+    img_size=28,
 ):
     """
-    加载 BloodMNIST 数据集，返回 DataLoader。
+    加载 MedMNIST 分类数据集，返回 DataLoader。
 
     Args:
         batch_size: 批次大小，None 则自适应检测
@@ -144,35 +190,20 @@ def get_blood_mnist_loaders(
         generator = torch.Generator()
         generator.manual_seed(seed)
 
-    info = INFO[DATA_FLAG]
-    DataClass = getattr(medmnist, info['python_class'])
+    dataset_flag, info, DataClass, _, _ = resolve_dataset_info(dataset_flag)
 
     # ---- 数据变换 ----
-    # 训练集增强：水平翻转 + ±5°旋转（不破坏细胞形态）
-    if augment:
-        train_transform = transforms.Compose([
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomRotation(degrees=5),
-            transforms.ToTensor(),  # [0, 255] → [0.0, 1.0]
-        ])
-    else:
-        train_transform = transforms.Compose([
-            transforms.ToTensor(),
-        ])
-
-    test_transform = transforms.Compose([
-        transforms.ToTensor(),
-    ])
+    train_transform, test_transform = build_transforms(dataset_flag, augment=augment)
 
     # ---- 加载数据集 ----
     os.makedirs(DATA_ROOT, exist_ok=True)
 
     train_dataset = DataClass(split='train', transform=train_transform,
-                              download=True, root=DATA_ROOT, size=28)
+                              download=True, root=DATA_ROOT, size=img_size)
     val_dataset = DataClass(split='val', transform=test_transform,
-                            download=True, root=DATA_ROOT, size=28)
+                            download=True, root=DATA_ROOT, size=img_size)
     test_dataset = DataClass(split='test', transform=test_transform,
-                             download=True, root=DATA_ROOT, size=28)
+                             download=True, root=DATA_ROOT, size=img_size)
 
     # ---- 脉冲编码包装 ----
     train_dataset = SpikeEncodedDataset(train_dataset, T=T, mode=mode, encoding=encoding)
@@ -206,12 +237,17 @@ def get_blood_mnist_loaders(
     n_train = len(train_dataset)
     n_val = len(val_dataset)
     n_test = len(test_dataset)
-    print(f"[HemoSparse] BloodMNIST 加载完成 | 模式={mode} | T={T}")
+    print(f"[HemoSparse] {dataset_flag} 加载完成 | 模式={mode} | T={T} | encoding={encoding}")
     print(f"  训练集: {n_train} | 验证集: {n_val} | 测试集: {n_test}")
     print(f"  batch_size={batch_size} | num_workers={num_workers} | pin_memory={pin_memory}")
     print(f"  类别: {list(info['label'].values())}")
 
     return train_loader, val_loader, test_loader, info
+
+
+def get_blood_mnist_loaders(**kwargs):
+    kwargs.setdefault('dataset_flag', 'bloodmnist')
+    return get_medmnist_loaders(**kwargs)
 
 
 # ============================================================

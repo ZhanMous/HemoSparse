@@ -1,13 +1,8 @@
 # HemoSparse 项目依赖清单
 # Python >= 3.9
 
-# 基础框架
-torch==2.1.0
-torchvision==0.16.0
-torchaudio==2.1.0
-
-# SpikingJelly 脉冲神经网络框架（指定已发布版本）
-spikingjelly==0.0.14
+# SpikingJelly 脉冲神经网络框架（PyPI 发布版本号）
+spikingjelly==0.0.0.0.14
 
 # 科学计算
 numpy==1.24.2

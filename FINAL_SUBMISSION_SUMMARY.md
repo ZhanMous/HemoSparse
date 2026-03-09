@@ -1,10 +1,70 @@
 # HemoSparse 顶会最终投稿全流程优化总结
 
 ## 项目信息
-- **论文题目**：HemoSparse: Privacy-Protected Medical Image Classification with Sparse Spiking Neural Networks
+- **论文题目**：HemoSparse: Sparse Spiking Neural Networks for Privacy-Aware and Edge-Efficient Medical Image Classification
 - **会议/期刊**：NeurIPS / IEEE Transactions on Medical Imaging (TMI)
 - **修改类型**：顶会最终投稿全流程优化
-- **修改日期**：2026年3月8日
+- **修改日期**：2026年3月9日
+
+---
+
+## Pathology 数据集补充实验
+
+### 实验目的
+
+- 针对 BloodMNIST 上表现良好、但迁移到病理图像后性能显著下降的问题，新增 PathMNIST 迁移实验。
+- 目标不是只复现“掉点”，而是定位掉点来源：编码方式、时间步设置，还是病理图像增强策略。
+
+### 实验设计
+
+- 筛选阶段：在 PathMNIST 上对 SNN 和 DenseSNN 比较 direct / poisson 编码、T=6 / T=8、是否增强，共 5 组配置。
+- 正式阶段：选取筛选中最优的 SNN 配置，对 SNN、DenseSNN、ANN 做 2 次重复实验，全部使用验证集最优 checkpoint 汇报测试集结果。
+- 结果文件：`outputs/training_summary_pathology_final_compare.csv`、`outputs/training_runs_pathology_final_compare.csv`、`PATHOLOGY_EXPERIMENT_REPORT.md`。
+
+### 核心结果
+
+- 最优 SNN 病理配置为：direct 编码、T=6、关闭增强。
+- PathMNIST 最终测试准确率：SNN 82.33%±0.31，DenseSNN 62.02%±0.85，ANN 85.12%±0.40。
+- PathMNIST 黑盒 MIA（2 repeats, 2 shadow models, 3 shadow epochs）结果：SNN 的 MIA accuracy 为 0.5634±0.0053，AUC 为 0.5972±0.0029；ANN 分别为 0.5412±0.0065 和 0.5382±0.0085，当前差异未达显著性。
+- PathMNIST 稀疏性与理论能效结果：SNN 平均 spike rate 为 0.1582±0.0052，对应理论有效 MAC 节省 84.18%±0.52%；DenseSNN 无理论节省且单样本能耗更高。
+- 相比 BloodMNIST，准确率下降：SNN 11.30 个百分点，DenseSNN 30.13 个百分点，ANN 10.47 个百分点。
+- 筛选实验显示：Poisson 编码在 PathMNIST 上显著劣于 direct 编码；病理图像上默认增强会伤害 SNN 与 DenseSNN 的稳定性；DenseSNN 的退化远大于 SNN，说明问题并非“病理图像天然不适合脉冲网络”，而更接近于稠密时序实现与该数据域不匹配。
+
+### 结论更新
+
+- 原先“核心结论可推广至其他医疗影像任务”的说法需要更谨慎表述。PathMNIST 上 SNN 仍然保有一定竞争力，但需要重新选择输入编码与增强策略，不能直接复用 BloodMNIST 配置。
+- 稀疏 SNN 相比 DenseSNN 在病理图像迁移中更稳健，但与 ANN 仍存在约 2.79 个百分点的测试准确率差距。
+- PathMNIST 已经支持基于最优配置的隐私评估，但当前结果只能说明“病理场景下 SNN 未显著恶化隐私风险，同时理论稀疏性优势仍在”，还不能直接宣称其在该数据域上已经显著优于 ANN。
+
+---
+
+## DermaMNIST 数据集补充实验
+
+### 实验目的
+
+- 在 BloodMNIST 与 PathMNIST 之外，进一步补充皮肤镜图像分类任务，验证稀疏 SNN 的结论是否能够迁移到第三种医学图像模态。
+- 目标不是要求 SNN 在所有数据集上都严格超过 ANN，而是检查“准确率不落后太多、隐私风险不显著恶化、理论稀疏性收益仍然存在”这一核心论点是否仍成立。
+
+### 实验设计
+
+- 筛选阶段：在 DermaMNIST 上对 SNN 和 DenseSNN 比较 direct / poisson 编码、T=6 / T=8、是否增强，共 5 组配置。
+- 正式阶段：选取筛选中最优的 SNN 配置，对 SNN、DenseSNN、ANN 做 2 次重复实验，全部使用验证集最优 checkpoint 汇报测试集结果。
+- 隐私阶段：使用 2 repeats、2 shadow models、3 shadow epochs 的黑盒 MIA 设定进行比较。
+- 结果文件：outputs/training_summary_dermamnist_final_compare.csv、outputs/mia_results_dermamnist_final_compare.csv、outputs/medmnist_privacy_efficiency_summary_dermamnist_final_compare.csv、DERMAMNIST_EXPERIMENT_REPORT.md。
+
+### 核心结果
+
+- 最优 SNN 皮肤镜配置为：direct 编码、T=6、关闭增强。
+- DermaMNIST 最终测试准确率：SNN 69.93%±0.20，DenseSNN 66.81%±0.02，ANN 75.06%±0.20。
+- DermaMNIST 黑盒 MIA 结果：SNN accuracy 0.4842±0.0000，AUC 0.4954±0.0005；DenseSNN accuracy 0.4842±0.0000，AUC 0.4949±0.0000；ANN accuracy 0.4809±0.0021，AUC 0.4857±0.0016。三者均接近随机猜测，当前差异未达显著性。
+- DermaMNIST 稀疏性与理论能效结果：SNN 平均 spike rate 为 0.0926±0.0023，对应理论有效 MAC 节省 90.74%±0.23%；DenseSNN 无理论节省且单样本能耗高于 SNN。
+- 相比 BloodMNIST，准确率下降：SNN 23.70 个百分点，DenseSNN 25.34 个百分点，ANN 20.53 个百分点。
+
+### 结论更新
+
+- DermaMNIST 进一步说明：SNN 的理论稀疏性收益并不局限于血液或病理切片图像，在皮肤镜图像上依然明显成立。
+- 但在准确率层面，SNN 与 ANN 的差距扩大到约 5.13 个百分点，说明不同医学图像模态下的精度代价并不一致，论文需要明确这是“可控权衡”而非“总能无损迁移”。
+- 在 DermaMNIST 当前黑盒攻击设定下，三类模型的 MIA 指标都接近随机猜测，说明该数据域中的隐私信号较弱，不能单独用它来证明 SNN 隐私优势更强，但可以证明 SNN 并未引入更明显的隐私风险。
 
 ---
 
@@ -32,15 +92,16 @@
 **具体修改**：
 
 **表格标题统一**：
-- 表V：与SOTA隐私防御方法对比（去掉「采用IEEE三行表格式」后缀）
-- 表VI：稀疏度梯度消融实验（去掉「采用IEEE三行表格式」后缀）
-- 表VII：固定准确率的稀疏度控制变量实验（去掉后缀）
-- 表VIII：PLIF可学习参数消融实验（去掉后缀）
-- 表IX：PLIF替代梯度β参数消融实验（去掉后缀）
-- 表X：模型记忆程度量化对比（去掉后缀）
-- 表XI：理论有效操作数分析（去掉后缀）
-- 表XII：Spiking Transformer与现有模型的性能-隐私-功耗对比（去掉后缀）
-- 表XIII：Spiking Transformer稀疏度消融实验（去掉后缀）
+- 表V：三数据集主结果对比（去掉后缀）
+- 表VI：与SOTA隐私防御方法对比（去掉「采用IEEE三行表格式」后缀）
+- 表VII：稀疏度梯度消融实验（去掉「采用IEEE三行表格式」后缀）
+- 表VIII：固定准确率的稀疏度控制变量实验（去掉后缀）
+- 表IX：PLIF可学习参数消融实验（去掉后缀）
+- 表X：PLIF替代梯度β参数消融实验（去掉后缀）
+- 表XI：模型记忆程度量化对比（去掉后缀）
+- 表XII：理论有效操作数分析（去掉后缀）
+- 表XIII：Spiking Transformer与现有模型的性能-隐私-功耗对比（去掉后缀）
+- 表XIV：Spiking Transformer稀疏度消融实验（去掉后缀）
 
 **图片编号统一**：
 - 图1 → 图I：不同模型的性能对比柱状图
@@ -50,7 +111,7 @@
 - 图5 → 图V：Spiking Transformer与现有模型的准确率对比柱状图
 - 图6 → 图VI：Spiking Transformer架构下稀疏度与MIA鲁棒性关系折线图
 
-**修改位置**：全文所有图表（表I-XIII，图I-VI）
+**修改位置**：全文所有图表（表I-XIV，图I-VI）
 
 ---
 
@@ -104,7 +165,7 @@
 
 **补充内容**：
 ```
-尽管如此，本研究的核心结论可推广至其他医疗影像分类任务，因为稀疏激活模式的隐私保护机制是通用的，不依赖于特定数据集。
+尽管 PathMNIST 与 DermaMNIST 补充实验表明该结论具备一定迁移性，但其适用程度仍受数据域、编码方式、增强策略和攻击设定影响，因此对“可推广至其他医疗影像分类任务”的表述需要保持审慎。
 ```
 
 **修改位置**：6.5节「实验局限性」
@@ -129,7 +190,7 @@
 
 **Reviewer 1 意见1：图表格式需要统一**
 - 响应：已完成所有图表格式的统一优化
-- 修改位置：全文所有图表（表I-XIII，图I-VI）
+- 修改位置：全文所有图表（表I-XIV，图I-VI）
 
 **Reviewer 1 意见2：摘要需要突出核心亮点**
 - 响应：已在摘要中补充了核心量化结果
@@ -166,12 +227,17 @@
    - 完整PLIF β参数消融（β ∈ [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0]）
    - 完整Spiking Transformer消融实验
 
-2. **5次独立重复实验原始数据**
+2. **跨数据集迁移补充结果**
+   - PathMNIST 正式对比、黑盒 MIA 与理论稀疏性结果
+   - DermaMNIST 正式对比、黑盒 MIA 与理论稀疏性结果
+   - 三数据集证据强度与结论边界说明
+
+3. **5次独立重复实验原始数据**
    - 模型性能对比（5次独立运行）
    - MIA攻击准确率（5次独立运行）
    - 功耗测量（5次独立运行）
 
-3. **影响函数计算完整代码实现**
+4. **影响函数计算完整代码实现**
    - `InfluenceFunctionCalculator` 类完整实现
    - 一阶梯度计算方法
    - Hessian向量积（HVP）高效近似

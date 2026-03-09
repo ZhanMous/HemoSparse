@@ -1,7 +1,7 @@
 # IEEE TMI 顶刊Minor Revision修改说明文档
 
 ## 项目信息
-- **论文题目**：HemoSparse: Privacy-Protected Medical Image Classification with Sparse Spiking Neural Networks
+- **论文题目**：HemoSparse: Sparse Spiking Neural Networks for Privacy-Aware and Edge-Efficient Medical Image Classification
 - **期刊**：IEEE Transactions on Medical Imaging (TMI)
 - **修改类型**：Minor Revision
 - **修改日期**：2025年
