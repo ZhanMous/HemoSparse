@@ -65,8 +65,9 @@ Table 1 reports the main BloodMNIST results, including test accuracy and trainin
 
 \begin{table}[t]
 \centering
-\small
+\footnotesize
 \caption{BloodMNIST main results. Mean and standard deviation over five independent runs; SNN and DenseSNN use aligned backbone scale and training protocol.}
+\begin{adjustbox}{max width=\columnwidth}
 \begin{tabular}{lccc}
 \specialrule{0.08em}{0pt}{0pt}
 Model & Params (M) & Test Acc. (\%) & Train Time (s) \\
@@ -76,6 +77,7 @@ SNN & 0.117 & 93.63 $\pm$ 0.28 & 572.49 $\pm$ 12.56 \\
 DenseSNN & 0.117 & 92.15 $\pm$ 0.35 & 568.32 $\pm$ 11.89 \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
 
 ![BloodMNIST test-accuracy comparison across main models. ANN reaches the highest accuracy, while SNN remains consistently stronger than DenseSNN.](./outputs/figures/model_performance.png)
@@ -86,8 +88,9 @@ Table 2 reports the BloodMNIST membership-inference results.
 
 \begin{table}[t]
 \centering
-\small
+\footnotesize
 \caption{BloodMNIST privacy results. Membership inference uses a shadow-model attack with confidence-based features; values are mean and standard deviation over five runs.}
+\begin{adjustbox}{max width=\columnwidth}
 \begin{tabular}{lccc}
 \specialrule{0.08em}{0pt}{0pt}
 Model & MIA Acc. & Train Conf. & Test Conf. \\
@@ -98,6 +101,7 @@ ANN & 0.628 $\pm$ 0.021 & 0.722 $\pm$ 0.041 & 0.716 $\pm$ 0.039 \\
 Overfit ANN & 0.745 $\pm$ 0.018 & 0.912 $\pm$ 0.025 & 0.789 $\pm$ 0.032 \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
 
 SNN is nearly indistinguishable from random guessing under MIA, whereas ANN and the deliberately overfit ANN exhibit larger confidence gaps. DenseSNN lies between the two, which is consistent with sparse execution helping suppress leakage signals associated with training-set memorization.
@@ -106,8 +110,9 @@ Table 3 summarizes the BloodMNIST efficiency results, including spike rate, dyna
 
 \begin{table}[t]
 \centering
-\small
+\footnotesize
 \caption{BloodMNIST efficiency results. Dynamic power and latency are measured on the current GPU, whereas MAC Save denotes theoretical effective-MAC reduction derived from spike rate.}
+\begin{adjustbox}{max width=\columnwidth}
 \begin{tabular}{lcccc}
 \specialrule{0.08em}{0pt}{0pt}
 Model & Spike Rate & Power (W) & Latency (ms) & MAC Save \\
@@ -117,6 +122,7 @@ DenseSNN & 0.477 & 12.567 $\pm$ 0.245 & 4.601 $\pm$ 0.105 & 0.0\% \\
 ANN & 1.000 & 9.300 $\pm$ 0.156 & 0.508 $\pm$ 0.021 & 0.0\% \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
 
 ![BloodMNIST power-latency distribution across models. SNN does not achieve lower latency or lower measured power on the current GPU.](./outputs/figures/power_latency.png)
@@ -129,8 +135,9 @@ Table 4 reports the BloodMNIST threshold ablation.
 
 \begin{table}[t]
 \centering
-\small
+\footnotesize
 \caption{BloodMNIST threshold ablation. Higher thresholds increase sparsity and reduce MIA risk, while accuracy is best balanced at an intermediate threshold.}
+\begin{adjustbox}{max width=\columnwidth}
 \begin{tabular}{cccc}
 \specialrule{0.08em}{0pt}{0pt}
 $v_{\text{threshold}}$ & Sparsity & Test Acc. (\%) & MIA Acc. \\
@@ -141,6 +148,7 @@ $v_{\text{threshold}}$ & Sparsity & Test Acc. (\%) & MIA Acc. \\
 1.5 & 0.999 $\pm$ 0.000 & 92.87 $\pm$ 0.42 & 0.498 $\pm$ 0.016 \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
 
 ![BloodMNIST sparsity versus membership-inference risk. Within the current sweep, higher sparsity corresponds to lower MIA accuracy.](./outputs/figures/sparsity_vs_mia.png)
@@ -153,8 +161,9 @@ The formal PathMNIST and DermaMNIST comparisons use two repeats. Table 5 summari
 
 \begin{table*}[t]
 \centering
-\small
+\footnotesize
 \caption{Cross-dataset transfer results. PathMNIST and DermaMNIST each use two runs and are intended primarily to reveal cross-dataset trends rather than strong statistical conclusions.}
+\begin{adjustbox}{max width=\textwidth}
 \begin{tabular}{llcccc}
 \specialrule{0.08em}{0pt}{0pt}
 Dataset & Model & Test Acc. (\%) & MIA Acc. & Spike Rate & MAC Save \\
@@ -167,6 +176,7 @@ DermaMNIST & DenseSNN & 66.81 $\pm$ 0.02 & 0.4842 $\pm$ 0.0000 & 0.1925 $\pm$ 0.
 DermaMNIST & ANN & 75.06 $\pm$ 0.20 & 0.4809 $\pm$ 0.0021 & N/A & 0.00 $\pm$ 0.00\% \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table*}
 
 ![Cross-dataset accuracy and membership-inference comparison. Theoretical efficiency gains are observed across datasets, whereas privacy gains are not uniformly stable.](./outputs/figures/cross_dataset_tradeoff.png)
@@ -179,8 +189,9 @@ Table 6 reports the comparison against DP-SGD.
 
 \begin{table}[t]
 \centering
-\small
+\footnotesize
 \caption{DP-SGD comparison. ANN, ANN+DP-SGD, and SNN are compared under the same evaluation protocol in terms of accuracy, MIA, and latency.}
+\begin{adjustbox}{max width=\columnwidth}
 \begin{tabular}{lccc}
 \specialrule{0.08em}{0pt}{0pt}
 Method & Test Acc. (\%) & MIA Acc. & Latency (ms) \\
@@ -190,6 +201,7 @@ ANN + DP-SGD & 86.98 $\pm$ 0.42 & 0.502 $\pm$ 0.016 & 0.584 $\pm$ 0.024 \\
 SNN & 93.63 $\pm$ 0.28 & 0.500 $\pm$ 0.015 & 4.724 $\pm$ 0.123 \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
 
 Under the current setup, SNN approaches the privacy level of DP-SGD while preserving substantially higher accuracy, but it remains much slower than ANN-style models on GPU. Within the scope of these experiments, SNN is therefore better viewed as a joint privacy-and-hardware-potential solution than as a direct low-latency ANN replacement.
@@ -198,8 +210,9 @@ Table 7 reports the PLIF parameter ablation.
 
 \begin{table}[t]
 \centering
-\small
+\footnotesize
 \caption{PLIF parameter ablation. A learnable membrane constant provides the best accuracy-privacy balance under the current setup.}
+\begin{adjustbox}{max width=\columnwidth}
 \begin{tabular}{lccc}
 \specialrule{0.08em}{0pt}{0pt}
 Model & Test Acc. (\%) & Sparsity & MIA Acc. \\
@@ -208,14 +221,16 @@ SNN (learnable $\alpha$) & 93.63 $\pm$ 0.28 & 0.997 $\pm$ 0.001 & 0.500 $\pm$ 0.
 SNN (fixed $\alpha=0.2$) & 92.15 $\pm$ 0.35 & 0.985 $\pm$ 0.003 & 0.525 $\pm$ 0.018 \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
 
 Table 8 reports the surrogate-gradient $\beta$ ablation.
 
 \begin{table}[t]
 \centering
-\small
+\footnotesize
 \caption{Surrogate-gradient $\beta$ ablation. An intermediate $\beta$ gives the most balanced trade-off among accuracy, sparsity, and MIA.}
+\begin{adjustbox}{max width=\columnwidth}
 \begin{tabular}{cccc}
 \specialrule{0.08em}{0pt}{0pt}
 $\beta$ & Test Acc. (\%) & Sparsity & MIA Acc. \\
@@ -225,6 +240,7 @@ $\beta$ & Test Acc. (\%) & Sparsity & MIA Acc. \\
 3.0 & 93.12 $\pm$ 0.30 & 0.996 $\pm$ 0.001 & 0.508 $\pm$ 0.016 \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
 
 Taken together, these two ablations indicate that the main configuration is not arbitrary, but instead provides a favorable balance among accuracy, sparsity, and privacy within the current search range.
@@ -237,8 +253,9 @@ Table 9 reports the Spiking Transformer threshold sweep.
 
 \begin{table}[t]
 \centering
-\small
+\footnotesize
 \caption{Spiking Transformer threshold sweep. Only accuracy, MIA, and sparsity are reported here; complete latency and power measurements are not yet available.}
+\begin{adjustbox}{max width=\columnwidth}
 \begin{tabular}{cccc}
 \specialrule{0.08em}{0pt}{0pt}
 $v_{\text{threshold}}$ & Sparsity & Test Acc. (\%) & MIA Acc. \\
@@ -249,6 +266,7 @@ $v_{\text{threshold}}$ & Sparsity & Test Acc. (\%) & MIA Acc. \\
 1.5 & 0.999 $\pm$ 0.000 & 92.01 $\pm$ 0.41 & 0.501 $\pm$ 0.016 \\
 \bottomrule
 \end{tabular}
+\end{adjustbox}
 \end{table}
 
 ![Spiking Transformer versus CNN baselines in accuracy and privacy. The Transformer extension broadly follows the same trend as the CNN-based SNN.](./outputs/figures/spiking_transformer_comparison.png)
