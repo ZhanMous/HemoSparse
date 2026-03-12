@@ -110,10 +110,6 @@ if "\\endgroup" not in content:
       content = content.replace(closing_anchor, "\\endgroup\n\n" + closing_anchor, 1)
       break
 
-if lang_code.startswith("zh") or lang_code.startswith("cn"):
-  content = content.replace("\\begin{table*}", "\\begin{table}")
-  content = content.replace("\\end{table*}", "\\end{table}")
-
 tex_path.write_text(content, encoding='utf-8')
 PY
 

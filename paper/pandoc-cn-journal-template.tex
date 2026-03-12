@@ -1,6 +1,6 @@
-\documentclass[11pt,a4paper]{article}
+\documentclass[10pt,a4paper]{article}
 
-\usepackage[a4paper,left=2.4cm,right=2.4cm,top=2.6cm,bottom=2.6cm]{geometry}
+\usepackage[a4paper,left=1.8cm,right=1.8cm,top=2.0cm,bottom=2.3cm,headheight=14pt,headsep=0.5cm,footskip=0.8cm]{geometry}
 \usepackage{fontspec}
 \usepackage{xeCJK}
 \usepackage{xcolor}
@@ -18,7 +18,6 @@
 \usepackage{xurl}
 \usepackage{etoolbox}
 \usepackage{footnote}
-\usepackage{abstract}
 \usepackage{indentfirst}
 \usepackage[section]{placeins}
 
@@ -36,23 +35,43 @@
   pdfcreator={LaTeX via pandoc}
 }
 
-\linespread{1.32}
+\makeatletter
+\renewcommand{\normalsize}{%
+  \@setfontsize\normalsize{10.5pt}{15.5pt}%
+  \abovedisplayskip 8pt plus 2pt minus 4pt
+  \abovedisplayshortskip 0pt plus 2pt
+  \belowdisplayshortskip 5pt plus 2pt minus 2pt
+  \belowdisplayskip \abovedisplayskip
+}
+\normalsize
+\renewcommand{\small}{\@setfontsize\small{9.5pt}{14pt}}
+\renewcommand{\footnotesize}{\@setfontsize\footnotesize{8.5pt}{12pt}}
+\renewcommand{\large}{\@setfontsize\large{14pt}{20pt}}
+\renewcommand{\Large}{\@setfontsize\Large{16pt}{24pt}}
+\renewcommand{\LARGE}{\@setfontsize\LARGE{18pt}{26pt}}
+\makeatother
+
+\linespread{1.08}
 \setlength{\parindent}{2em}
 \setlength{\parskip}{0pt}
 \setlength{\emergencystretch}{2em}
-\renewcommand{\arraystretch}{1.15}
-\setlength{\tabcolsep}{4.5pt}
+\setlength{\columnsep}{0.78cm}
+\renewcommand{\arraystretch}{1.12}
+\setlength{\tabcolsep}{4pt}
 \setlength{\abovecaptionskip}{6pt}
 \setlength{\belowcaptionskip}{2pt}
-\setlength{\textfloatsep}{12pt plus 2pt minus 2pt}
-\setlength{\floatsep}{10pt plus 2pt minus 2pt}
-\setlength{\intextsep}{10pt plus 2pt minus 2pt}
+\setlength{\textfloatsep}{10pt plus 2pt minus 2pt}
+\setlength{\floatsep}{8pt plus 2pt minus 2pt}
+\setlength{\intextsep}{8pt plus 2pt minus 2pt}
 \setcounter{topnumber}{2}
+\setcounter{dbltopnumber}{2}
 \renewcommand{\topfraction}{0.85}
+\renewcommand{\dbltopfraction}{0.85}
 \renewcommand{\textfraction}{0.12}
 \renewcommand{\floatpagefraction}{0.75}
-\setlist[itemize]{leftmargin=2em,itemsep=3pt,topsep=4pt}
-\setlist[enumerate]{leftmargin=2.2em,itemsep=3pt,topsep=4pt}
+\renewcommand{\dblfloatpagefraction}{0.72}
+\setlist[itemize]{leftmargin=2em,itemsep=2pt,topsep=3pt}
+\setlist[enumerate]{leftmargin=2.2em,itemsep=2pt,topsep=3pt}
 
 \captionsetup{font=small,labelfont=bf}
 \captionsetup[figure]{justification=centering,singlelinecheck=false}
@@ -60,17 +79,21 @@
 \renewcommand{\figurename}{图}
 \renewcommand{\tablename}{表}
 
-\titleformat{\section}{\centering\bfseries\fontsize{15}{20}\selectfont}{\thesection}{0.6em}{}
-\titleformat{\subsection}{\bfseries\fontsize{13}{18}\selectfont}{\thesubsection}{0.6em}{}
+\titleformat{\section}{\raggedright\bfseries\fontsize{12}{18}\selectfont}{\thesection}{0.5em}{}
+\titleformat{\subsection}{\raggedright\bfseries\fontsize{10.5}{16}\selectfont}{\thesubsection}{0.5em}{}
 \titleformat{\subsubsection}{\bfseries\normalsize}{\thesubsubsection}{0.6em}{}
-\titlespacing*{\section}{0pt}{1.6ex plus 0.4ex minus 0.2ex}{1.0ex}
-\titlespacing*{\subsection}{0pt}{1.2ex plus 0.3ex minus 0.2ex}{0.6ex}
+\titlespacing*{\section}{0pt}{1.4ex plus 0.4ex minus 0.2ex}{0.8ex}
+\titlespacing*{\subsection}{0pt}{1.0ex plus 0.3ex minus 0.2ex}{0.5ex}
 \titlespacing*{\subsubsection}{0pt}{1.0ex plus 0.2ex minus 0.1ex}{0.4ex}
 
 \pagestyle{fancy}
 \fancyhf{}
-\fancyfoot[C]{\thepage}
-\renewcommand{\headrulewidth}{0pt}
+\fancyhead[L]{\footnotesize\thepage}
+\fancyhead[C]{\footnotesize $if(journal_name)$$journal_name$$else$中文期刊论文$endif$}
+\fancyhead[R]{\footnotesize $if(journal_name_en)$$journal_name_en$$else$Chinese Journal Paper$endif$}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
 
 \makeatletter
 \def\fps@figure{htbp}
@@ -91,41 +114,77 @@
 \providecommand{\tightlist}{%
   \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
 
-\newcommand{\cnmaintitle}[1]{{\fontsize{20}{28}\selectfont\bfseries #1\par}}
-\newcommand{\cnsubtitle}[1]{\vspace{0.45em}{\large #1\par}}
-\newcommand{\cnkeywords}[2]{\par\vspace{0.5em}\noindent\textbf{#1：}#2\par}
-\renewcommand{\abstractname}{$if(abstract_title)$$abstract_title$$else$摘要$endif$}
-\renewcommand{\abstractnamefont}{\normalsize\bfseries}
-\renewcommand{\abstracttextfont}{\normalsize}
+\newcommand{\cnmaintitle}[1]{{\fontsize{18}{25}\selectfont\bfseries #1\par}}
+\newcommand{\centitle}[1]{{\fontsize{13}{18}\selectfont\bfseries #1\par}}
+\newcommand{\frontlabel}[1]{\noindent\textbf{#1}\hspace{0.5em}}
+\newcommand{\frontline}[2]{\par\noindent\textbf{#1}\hspace{0.5em}#2\par}
+\newcommand{\journalbanner}{%
+  \begin{center}
+  {\small\bfseries $if(journal_name)$$journal_name$$else$中文期刊论文$endif$\par}
+  {\footnotesize $if(journal_name_en)$$journal_name_en$$else$Chinese Journal Paper$endif$\par}
+  \end{center}
+  \vspace{0.2em}\hrule\vspace{0.8em}}
 
 \begin{document}
 
-\begin{center}
-$if(subtitle)$
-  \cnmaintitle{$subtitle$}
-  \cnsubtitle{$title$}
-$else$
-  \cnmaintitle{$title$}
+\thispagestyle{empty}
+\journalbanner
+
+$if(paper_note)$
+{\footnotesize $paper_note$\par}
+\vspace{0.8em}
 $endif$
-  \vspace{0.8em}
+
+\begin{center}
+  \cnmaintitle{$title$}
+  \vspace{0.7em}
 $for(author)$
   {\normalsize $author$\par}
+$endfor$
+  \vspace{0.4em}
+$for(affiliation)$
+  {\small $affiliation$\par}
 $endfor$
 \end{center}
 
 $if(abstract)$
-\vspace{0.8em}
-\begin{center}
-{\normalsize\bfseries $if(abstract_title)$$abstract_title$$else$摘要$endif$}
-\end{center}
-\noindent $abstract$
+\frontline{$if(abstract_title)$$abstract_title$$else$摘要$endif$}{$abstract$}
 $endif$
 
 $if(keywords)$
-\cnkeywords{$if(keyword_title)$$keyword_title$$else$关键词$endif$}{$for(keywords)$$keywords$$sep$$if(keyword_sep)$$keyword_sep$$else$；$endif$$endfor$}
+\frontline{$if(keyword_title)$$keyword_title$$else$关键词$endif$}{$for(keywords)$$keywords$$sep$$if(keyword_sep)$$keyword_sep$$else$；$endif$$endfor$}
 $endif$
 
-\vspace{0.8em}
+$if(classification)$
+\frontline{中图法分类号}{$classification$}
+$endif$
+
+$if(eng_title)$
+\vspace{1.1em}
+\begin{center}
+  \centitle{$eng_title$}
+  \vspace{0.6em}
+$for(author_en)$
+  {\normalsize $author_en$\par}
+$endfor$
+  \vspace{0.3em}
+$for(affiliation_en)$
+  {\small $affiliation_en$\par}
+$endfor$
+\end{center}
+$endif$
+
+$if(eng_abstract)$
+\frontline{$if(eng_abstract_title)$$eng_abstract_title$$else$Abstract$endif$}{$eng_abstract$}
+$endif$
+
+$if(eng_keywords)$
+\frontline{$if(eng_keyword_title)$$eng_keyword_title$$else$Key words$endif$}{$for(eng_keywords)$$eng_keywords$$sep$$if(eng_keyword_sep)$$eng_keyword_sep$$else$; $endif$$endfor$}
+$endif$
+
+\clearpage
+\pagestyle{fancy}
+\twocolumn
 
 $body$
 
